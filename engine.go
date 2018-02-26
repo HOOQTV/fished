@@ -52,7 +52,11 @@ func (e *Engine) Run() interface{} {
 	for i, v := range e.Facts {
 		e.wm[i] = v
 	}
-	e.createAgenda(e.Rules, e.wm)
+
+	e.workingRules = make([]Rule, len(e.Rules))
+	copy(e.workingRules, e.Rules)
+
+	e.createAgenda()
 	for i := 0; i < e.Worker; i++ {
 		wg.Add(1)
 		go e.worker(&wg)
@@ -70,10 +74,8 @@ func (e *Engine) watcher() {
 
 func (e *Engine) worker(wg *sync.WaitGroup) {
 	for job := range e.Jobs {
-		if e.eval(job.CurRule, e.wm, e.RuleFunctions) {
-			e.planLock.Lock()
-			e.createAgenda(e.workingRules, e.wm)
-			e.planLock.Unlock()
+		if e.eval(job.CurRule) {
+			e.createAgenda()
 		}
 		e.work.Done()
 	}
@@ -81,24 +83,22 @@ func (e *Engine) worker(wg *sync.WaitGroup) {
 }
 
 // eval return true or false that will invoke need to update agenda or not.
-func (e *Engine) eval(r Rule, workingMemory map[string]interface{}, f map[string]govaluate.ExpressionFunction) bool {
+func (e *Engine) eval(r Rule) bool {
 	fmt.Println(r.Output, "called")
-	re, _ := govaluate.NewEvaluableExpressionWithFunctions(r.Rule, f)
-	e.wmLock.Lock()
+	re, _ := govaluate.NewEvaluableExpressionWithFunctions(r.Rule, e.RuleFunctions)
 	// fmt.Println("Rule Memory:", r)
 	// fmt.Println("Working Memory:", workingMemory)
-	valid, _ := re.Evaluate(workingMemory)
-	e.wmLock.Unlock()
+	valid, _ := re.Evaluate(e.wm)
 	fmt.Println(r.Output, "result: ", valid)
 
 	if valid != nil && valid.(bool) {
-		ve, err := govaluate.NewEvaluableExpressionWithFunctions(r.Value, f)
+		ve, err := govaluate.NewEvaluableExpressionWithFunctions(r.Value, e.RuleFunctions)
 		if err == nil {
 			res, _ := ve.Evaluate(nil)
 
 			if r.Output != "" {
 				e.wmLock.Lock()
-				workingMemory[r.Output] = res
+				e.wm[r.Output] = res
 				e.wmLock.Unlock()
 				return true
 			}
@@ -107,15 +107,17 @@ func (e *Engine) eval(r Rule, workingMemory map[string]interface{}, f map[string
 	return false
 }
 
-func (e *Engine) createAgenda(rules []Rule, workingMemory map[string]interface{}) {
-	fmt.Println("Rule length", len(rules))
-
+func (e *Engine) createAgenda() {
+	e.planLock.Lock()
+	defer e.planLock.Unlock()
 	e.wmLock.Lock()
+	defer e.wmLock.Unlock()
+
 	i := 0
-	for i < len(rules) {
-		rule := rules[i]
+	for i < len(e.workingRules) {
+		rule := e.workingRules[i]
 		validInput := 0
-		for attribute := range workingMemory {
+		for attribute := range e.wm {
 			for _, input := range rule.Input {
 				if input == attribute {
 					validInput++
@@ -130,13 +132,11 @@ func (e *Engine) createAgenda(rules []Rule, workingMemory map[string]interface{}
 			e.work.Add(1)
 			e.Jobs <- *j
 
-			rules[i] = rules[len(rules)-1]
-			rules[len(rules)-1] = Rule{}
-			rules = rules[:len(rules)-1]
+			e.workingRules[i] = e.workingRules[len(e.workingRules)-1]
+			e.workingRules[len(e.workingRules)-1] = Rule{}
+			e.workingRules = e.workingRules[:len(e.workingRules)-1]
 		} else {
 			i++
 		}
 	}
-	e.wmLock.Unlock()
-	e.workingRules = rules
 }
