@@ -1,0 +1,40 @@
+{
+    "data": [
+        {
+            "input": ["account_partner"],
+            "output": "account_type",
+            "rule": "account_partner == 'telkom'",
+            "value": "'SVOD'"
+        },
+        {
+            "input": ["account_partner"],
+            "output": "title_type",
+            "rule": "account_partner == 'telkom'",
+            "value": "'SVOD'"
+        },
+        {
+            "input": ["title_type"],
+            "output": "title_type_eligible",
+            "rule": "title_type == 'SVOD'",
+            "value": "true"
+        },
+        {
+            "input": ["account_type"],
+            "output": "account_type_eligible",
+            "rule": "account_type == 'SVOD'",
+            "value": "true"
+        },
+        {
+            "input": ["account_region"],
+            "output": "account_region_eligible",
+            "rule": "account_region == 'SG'",
+            "value": "true"
+        },
+        {
+            "input": ["account_type_eligible", "title_type_eligible", "account_region_eligible"],
+            "output": "result_end",
+            "rule": "account_type_eligible && title_type_eligible && account_region_eligible",
+            "value": "true"
+        }
+    ]
+}
