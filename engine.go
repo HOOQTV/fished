@@ -14,7 +14,7 @@ type Engine struct {
 	Rules         []Rule
 	workingRules  []Rule
 	RuleFunctions map[string]govaluate.ExpressionFunction
-	Jobs          chan Job
+	Jobs          chan Rule
 	Worker        int
 	work          sync.WaitGroup
 	wmLock        sync.Mutex
@@ -29,17 +29,12 @@ type Rule struct {
 	Value  string   `json:"value"`
 }
 
-// Job ...
-type Job struct {
-	CurRule Rule
-}
-
 var workerPoolSize = 10
 
 // New ...
 func New(worker int) *Engine {
 	e := &Engine{
-		Jobs:   make(chan Job, worker*workerPoolSize),
+		Jobs:   make(chan Rule, worker*workerPoolSize),
 		Worker: worker,
 	}
 	return e
@@ -74,7 +69,7 @@ func (e *Engine) watcher() {
 
 func (e *Engine) worker(wg *sync.WaitGroup) {
 	for job := range e.Jobs {
-		if e.eval(job.CurRule) {
+		if e.eval(job) {
 			e.createAgenda()
 		}
 		e.work.Done()
@@ -108,6 +103,7 @@ func (e *Engine) eval(r Rule) bool {
 }
 
 func (e *Engine) createAgenda() {
+	fmt.Println("Rules left:", len(e.workingRules))
 	e.planLock.Lock()
 	defer e.planLock.Unlock()
 	e.wmLock.Lock()
@@ -126,11 +122,8 @@ func (e *Engine) createAgenda() {
 		}
 		if validInput == len(rule.Input) && validInput != 0 {
 			fmt.Println("Output target:", rule.Output, "Added")
-			j := &Job{
-				CurRule: rule,
-			}
 			e.work.Add(1)
-			e.Jobs <- *j
+			e.Jobs <- rule
 
 			e.workingRules[i] = e.workingRules[len(e.workingRules)-1]
 			e.workingRules[len(e.workingRules)-1] = Rule{}
