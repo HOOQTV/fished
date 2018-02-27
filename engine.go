@@ -10,15 +10,16 @@ import (
 // Engine ...
 type Engine struct {
 	Facts         map[string]interface{}
-	wm            map[string]interface{}
 	Rules         []Rule
-	workingRules  map[string][]int
 	RuleFunctions map[string]govaluate.ExpressionFunction
 	Jobs          chan int
 	Worker        int
 	work          sync.WaitGroup
 	wmLock        sync.Mutex
 	planLock      sync.Mutex
+	err           []error
+	wm            map[string]interface{}
+	workingRules  map[string][]int
 }
 
 // Rule ...
@@ -43,12 +44,13 @@ func New(worker int) *Engine {
 		Worker:        worker,
 		Facts:         make(map[string]interface{}),
 		RuleFunctions: make(map[string]govaluate.ExpressionFunction),
+		err:           []error{},
 	}
 	return e
 }
 
 // Run ...
-func (e *Engine) Run() interface{} {
+func (e *Engine) Run() (interface{}, []error) {
 	var wg sync.WaitGroup
 	e.wm = make(map[string]interface{})
 	for i, v := range e.Facts {
@@ -73,8 +75,7 @@ func (e *Engine) Run() interface{} {
 	}
 	e.watcher()
 	wg.Wait()
-
-	return e.wm["result_end"]
+	return e.wm["result_end"], e.err
 }
 
 func (e *Engine) watcher() {
@@ -90,15 +91,17 @@ func (e *Engine) worker(wg *sync.WaitGroup) {
 	wg.Done()
 }
 
-// eval return true or false that will invoke need to update agenda or not.
+// eval will evaluate current rule.
 func (e *Engine) eval(index int) {
 	re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Rule, make(map[string]govaluate.ExpressionFunction))
 	if err != nil {
-		panic(err)
+		e.err = append(e.err, err)
+		return
 	}
 	valid, err := re.Evaluate(e.wm)
 	if err != nil {
-		panic(err)
+		e.err = append(e.err, err)
+		return
 	}
 
 	if valid != nil && valid.(bool) {
@@ -112,10 +115,14 @@ func (e *Engine) eval(index int) {
 				e.wmLock.Unlock()
 				e.updateAgenda(e.Rules[index].Output)
 			}
+		} else {
+			e.err = append(e.err, err)
+			return
 		}
 	}
 }
 
+// Add jobs base on current working memory attribute
 func (e *Engine) updateAgenda(input string) {
 	e.planLock.Lock()
 	defer e.planLock.Unlock()
@@ -142,6 +149,7 @@ func (e *Engine) updateAgenda(input string) {
 	delete(e.workingRules, input)
 }
 
+// initialize jobs
 func (e *Engine) createAgenda() {
 	for attribute := range e.wm {
 		e.updateAgenda(attribute)

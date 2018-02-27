@@ -1,0 +1,10 @@
+{
+    "data": [
+        {
+            "input": ["account_partner"],
+            "output": "account_type",
+            "rule": "account_partner == 'hello",
+            "value": "'free'"
+        }
+    ]
+}

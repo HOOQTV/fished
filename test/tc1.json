@@ -3,37 +3,37 @@
         {
             "input": ["account_partner"],
             "output": "account_type",
-            "rule": "account_partner == 'singtel'",
-            "value": "'SVOD'"
+            "rule": "account_partner == 'hello'",
+            "value": "'free'"
         },
         {
             "input": ["account_partner"],
-            "output": "title_type",
-            "rule": "account_partner == 'singtel'",
-            "value": "'SVOD'"
+            "output": "flight_type",
+            "rule": "account_partner == 'hello'",
+            "value": "'free'"
         },
         {
-            "input": ["title_type"],
-            "output": "title_type_eligible",
-            "rule": "title_type == 'SVOD'",
+            "input": ["flight_type"],
+            "output": "flight_type_eligible",
+            "rule": "flight_type == 'free'",
             "value": "true"
         },
         {
             "input": ["account_type"],
             "output": "account_type_eligible",
-            "rule": "account_type == 'SVOD'",
+            "rule": "account_type == 'free'",
             "value": "true"
         },
         {
             "input": ["account_region"],
             "output": "account_region_eligible",
-            "rule": "account_region == 'SG'",
+            "rule": "account_region == 'ID'",
             "value": "true"
         },
         {
-            "input": ["account_type_eligible", "title_type_eligible", "account_region_eligible"],
+            "input": ["account_type_eligible", "flight_type_eligible", "account_region_eligible"],
             "output": "result_end",
-            "rule": "account_type_eligible && title_type_eligible && account_region_eligible",
+            "rule": "account_type_eligible && flight_type_eligible && account_region_eligible",
             "value": "true"
         }
     ]
