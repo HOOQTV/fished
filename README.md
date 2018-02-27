@@ -1,3 +1,5 @@
+
+
 # fished
 Fish answers from rules and facts
 
@@ -41,3 +43,5 @@ This project is powered by
 - https://github.com/json-iterator/go. One of (or the fastest) drop-in replacement for standart json library.
 - https://github.com/stretchr/testify. A nice and clean testing library. Helping me a lot for better test results.
 
+# LICENSE
+See LICENSE.md
