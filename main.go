@@ -27,7 +27,7 @@ func main() {
 	json.Unmarshal(raw, &rules)
 
 	startTime := time.Now()
-	e := New(4) // limit of rules that can be run simultan
+	e := New(100) // limit of rules that can be run simultan
 	e.Rules = rules.Data
 	e.Facts = make(map[string]interface{})
 	e.RuleFunctions = make(map[string]govaluate.ExpressionFunction)

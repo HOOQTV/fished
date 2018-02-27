@@ -12,9 +12,9 @@ type Engine struct {
 	Facts         map[string]interface{}
 	wm            map[string]interface{}
 	Rules         []Rule
-	workingRules  []Rule
+	workingRules  map[string][]int
 	RuleFunctions map[string]govaluate.ExpressionFunction
-	Jobs          chan Rule
+	Jobs          chan int
 	Worker        int
 	work          sync.WaitGroup
 	wmLock        sync.Mutex
@@ -34,7 +34,7 @@ var workerPoolSize = 10
 // New ...
 func New(worker int) *Engine {
 	e := &Engine{
-		Jobs:   make(chan Rule, worker*workerPoolSize),
+		Jobs:   make(chan int, worker*workerPoolSize),
 		Worker: worker,
 	}
 	return e
@@ -48,8 +48,16 @@ func (e *Engine) Run() interface{} {
 		e.wm[i] = v
 	}
 
-	e.workingRules = make([]Rule, len(e.Rules))
-	copy(e.workingRules, e.Rules)
+	e.workingRules = make(map[string][]int)
+	for i, rule := range e.Rules {
+		for _, input := range rule.Input {
+			if e.workingRules[input] == nil {
+				e.workingRules[input] = []int{i}
+			} else {
+				e.workingRules[input] = append(e.workingRules[input], i)
+			}
+		}
+	}
 
 	e.createAgenda()
 	for i := 0; i < e.Worker; i++ {
@@ -69,16 +77,14 @@ func (e *Engine) watcher() {
 
 func (e *Engine) worker(wg *sync.WaitGroup) {
 	for job := range e.Jobs {
-		if e.eval(job) {
-			e.createAgenda()
-		}
+		e.eval(e.Rules[job])
 		e.work.Done()
 	}
 	wg.Done()
 }
 
 // eval return true or false that will invoke need to update agenda or not.
-func (e *Engine) eval(r Rule) bool {
+func (e *Engine) eval(r Rule) {
 	fmt.Println(r.Output, "called")
 	re, _ := govaluate.NewEvaluableExpressionWithFunctions(r.Rule, e.RuleFunctions)
 	// fmt.Println("Rule Memory:", r)
@@ -95,23 +101,22 @@ func (e *Engine) eval(r Rule) bool {
 				e.wmLock.Lock()
 				e.wm[r.Output] = res
 				e.wmLock.Unlock()
-				return true
+				e.updateAgenda(r.Output)
 			}
 		}
 	}
-	return false
 }
 
-func (e *Engine) createAgenda() {
-	fmt.Println("Rules left:", len(e.workingRules))
+func (e *Engine) updateAgenda(input string) {
 	e.planLock.Lock()
 	defer e.planLock.Unlock()
 	e.wmLock.Lock()
 	defer e.wmLock.Unlock()
 
-	i := 0
-	for i < len(e.workingRules) {
-		rule := e.workingRules[i]
+	rules := e.workingRules[input]
+	fmt.Println("index:", input, "rules:", rules)
+	for _, i := range rules {
+		rule := e.Rules[i]
 		validInput := 0
 		for attribute := range e.wm {
 			for _, input := range rule.Input {
@@ -123,13 +128,14 @@ func (e *Engine) createAgenda() {
 		if validInput == len(rule.Input) && validInput != 0 {
 			fmt.Println("Output target:", rule.Output, "Added")
 			e.work.Add(1)
-			e.Jobs <- rule
-
-			e.workingRules[i] = e.workingRules[len(e.workingRules)-1]
-			e.workingRules[len(e.workingRules)-1] = Rule{}
-			e.workingRules = e.workingRules[:len(e.workingRules)-1]
-		} else {
-			i++
+			e.Jobs <- i
 		}
+	}
+	delete(e.workingRules, input)
+}
+
+func (e *Engine) createAgenda() {
+	for attribute := range e.wm {
+		e.updateAgenda(attribute)
 	}
 }
