@@ -2,6 +2,12 @@
 
 
 [[projects]]
+  name = "github.com/davecgh/go-spew"
+  packages = ["spew"]
+  revision = "346938d642f2ec3594ed81d874461961cd0faa76"
+  version = "v1.1.0"
+
+[[projects]]
   name = "github.com/json-iterator/go"
   packages = ["."]
   revision = "0ac74bba4a81211b28e32ef260c0f16ae41f1377"
@@ -14,10 +20,16 @@
   version = "v3.0.0"
 
 [[projects]]
-  name = "github.com/satori/go.uuid"
-  packages = ["."]
-  revision = "f58768cc1a7a7e77a3bd49e98cdd21419399b6a3"
-  version = "v1.2.0"
+  name = "github.com/pmezard/go-difflib"
+  packages = ["difflib"]
+  revision = "792786c7400a136282c1664665ae0a8db921c6c2"
+  version = "v1.0.0"
+
+[[projects]]
+  name = "github.com/stretchr/testify"
+  packages = ["assert"]
+  revision = "12b6f73e6084dad08a7c6e575284b177ecafbc71"
+  version = "v1.2.1"
 
 [[projects]]
   name = "github.com/v2pro/plz"
@@ -28,15 +40,9 @@
   revision = "10fc95fad3224a032229e59f6e7023137d82b526"
   version = "0.9.1"
 
-[[projects]]
-  name = "go.uber.org/zap"
-  packages = ["buffer"]
-  revision = "35aad584952c3e7020db7b839f6b102de6271f89"
-  version = "v1.7.1"
-
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "2a215a98b5747cf6882454f626d8eff189014cb75cd6612c02738be0110631a1"
+  inputs-digest = "016797b295b471b331841c23c768df5516d7799f9bd22adc72c65cba42cb402e"
   solver-name = "gps-cdcl"
   solver-version = 1

@@ -3,13 +3,13 @@
         {
             "input": ["account_partner"],
             "output": "account_type",
-            "rule": "account_partner == 'telkom'",
+            "rule": "account_partner == 'singtel'",
             "value": "'SVOD'"
         },
         {
             "input": ["account_partner"],
             "output": "title_type",
-            "rule": "account_partner == 'telkom'",
+            "rule": "account_partner == 'singtel'",
             "value": "'SVOD'"
         },
         {

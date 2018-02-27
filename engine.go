@@ -1,4 +1,4 @@
-package main
+package fished
 
 import (
 	"fmt"
@@ -29,13 +29,20 @@ type Rule struct {
 	Value  string   `json:"value"`
 }
 
+// RuleRaw ...
+type RuleRaw struct {
+	Data []Rule `json:"data"`
+}
+
 var workerPoolSize = 10
 
 // New ...
 func New(worker int) *Engine {
 	e := &Engine{
-		Jobs:   make(chan int, worker*workerPoolSize),
-		Worker: worker,
+		Jobs:          make(chan int, worker*workerPoolSize),
+		Worker:        worker,
+		Facts:         make(map[string]interface{}),
+		RuleFunctions: make(map[string]govaluate.ExpressionFunction),
 	}
 	return e
 }
@@ -77,31 +84,33 @@ func (e *Engine) watcher() {
 
 func (e *Engine) worker(wg *sync.WaitGroup) {
 	for job := range e.Jobs {
-		e.eval(e.Rules[job])
+		e.eval(job)
 		e.work.Done()
 	}
 	wg.Done()
 }
 
 // eval return true or false that will invoke need to update agenda or not.
-func (e *Engine) eval(r Rule) {
-	fmt.Println(r.Output, "called")
-	re, _ := govaluate.NewEvaluableExpressionWithFunctions(r.Rule, e.RuleFunctions)
-	// fmt.Println("Rule Memory:", r)
-	// fmt.Println("Working Memory:", workingMemory)
-	valid, _ := re.Evaluate(e.wm)
-	fmt.Println(r.Output, "result: ", valid)
+func (e *Engine) eval(index int) {
+	re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Rule, make(map[string]govaluate.ExpressionFunction))
+	if err != nil {
+		panic(err)
+	}
+	valid, err := re.Evaluate(e.wm)
+	if err != nil {
+		panic(err)
+	}
 
 	if valid != nil && valid.(bool) {
-		ve, err := govaluate.NewEvaluableExpressionWithFunctions(r.Value, e.RuleFunctions)
+		ve, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Value, e.RuleFunctions)
 		if err == nil {
 			res, _ := ve.Evaluate(nil)
 
-			if r.Output != "" {
+			if e.Rules[index].Output != "" {
 				e.wmLock.Lock()
-				e.wm[r.Output] = res
+				e.wm[e.Rules[index].Output] = res
 				e.wmLock.Unlock()
-				e.updateAgenda(r.Output)
+				e.updateAgenda(e.Rules[index].Output)
 			}
 		}
 	}
@@ -114,7 +123,6 @@ func (e *Engine) updateAgenda(input string) {
 	defer e.wmLock.Unlock()
 
 	rules := e.workingRules[input]
-	fmt.Println("index:", input, "rules:", rules)
 	for _, i := range rules {
 		rule := e.Rules[i]
 		validInput := 0

@@ -38,9 +38,5 @@
   unused-packages = true
 
 [[constraint]]
-  name = "go.uber.org/zap"
-  version = "1.7.1"
-
-[[constraint]]
-  name = "github.com/satori/go.uuid"
-  version = "1.2.0"
+  name = "github.com/stretchr/testify"
+  version = "1.2.1"
