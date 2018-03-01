@@ -25,10 +25,9 @@ type Engine struct {
 
 // Rule ...
 type Rule struct {
-	Output string   `json:"output"`
-	Input  []string `json:"input"`
-	Rule   string   `json:"rule"`
-	Value  string   `json:"value"`
+	Output     string   `json:"output"`
+	Input      []string `json:"input"`
+	Expression string   `json:"expression"`
 }
 
 // RuleRaw ...
@@ -106,33 +105,24 @@ func (e *Engine) worker(wg *sync.WaitGroup) {
 
 // eval will evaluate current rule.
 func (e *Engine) eval(index int) {
-	re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Rule, e.rf)
-	if err != nil {
-		e.err = append(e.err, err)
-		return
-	}
-	valid, err := re.Evaluate(e.wm)
-	if err != nil {
-		e.err = append(e.err, err)
-		return
-	}
-
-	if valid != nil && valid.(bool) {
-		ve, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Value, e.rf)
+	if e.Rules[index].Output != "" {
+		re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Expression, e.rf)
+		if err != nil {
+			e.err = append(e.err, err)
+			return
+		}
+		e.wmLock.Lock()
+		res, err := re.Evaluate(e.wm)
+		e.wmLock.Unlock()
 		if err != nil {
 			e.err = append(e.err, err)
 			return
 		}
 
-		res, _ := ve.Evaluate(nil)
-
-		if e.Rules[index].Output != "" {
-			e.wmLock.Lock()
-			e.wm[e.Rules[index].Output] = res
-			e.wmLock.Unlock()
-			e.updateAgenda(e.Rules[index].Output)
-		}
-
+		e.wmLock.Lock()
+		e.wm[e.Rules[index].Output] = res
+		e.wmLock.Unlock()
+		e.updateAgenda(e.Rules[index].Output)
 	}
 }
 
