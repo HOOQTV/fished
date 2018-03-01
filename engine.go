@@ -11,7 +11,8 @@ import (
 type Engine struct {
 	Facts         map[string]interface{}
 	Rules         []Rule
-	RuleFunctions map[string]govaluate.ExpressionFunction
+	RuleFunctions map[string]RuleFunction
+	rf            map[string]govaluate.ExpressionFunction
 	Jobs          chan int
 	Worker        int
 	work          sync.WaitGroup
@@ -35,6 +36,9 @@ type RuleRaw struct {
 	Data []Rule `json:"data"`
 }
 
+// RuleFunction ...
+type RuleFunction func(arguments ...interface{}) (interface{}, error)
+
 var workerPoolSize = 10
 
 // New ...
@@ -43,14 +47,14 @@ func New(worker int) *Engine {
 		Jobs:          make(chan int, worker*workerPoolSize),
 		Worker:        worker,
 		Facts:         make(map[string]interface{}),
-		RuleFunctions: make(map[string]govaluate.ExpressionFunction),
+		RuleFunctions: make(map[string]RuleFunction),
 		err:           []error{},
 	}
 	return e
 }
 
 // Run ...
-func (e *Engine) Run() (interface{}, []error) {
+func (e *Engine) Run(target ...string) (interface{}, []error) {
 	var wg sync.WaitGroup
 	e.wm = make(map[string]interface{})
 	for i, v := range e.Facts {
@@ -68,6 +72,11 @@ func (e *Engine) Run() (interface{}, []error) {
 		}
 	}
 
+	e.rf = make(map[string]govaluate.ExpressionFunction)
+	for i, f := range e.RuleFunctions {
+		e.rf[i] = govaluate.ExpressionFunction(f)
+	}
+
 	e.createAgenda()
 	for i := 0; i < e.Worker; i++ {
 		wg.Add(1)
@@ -75,7 +84,11 @@ func (e *Engine) Run() (interface{}, []error) {
 	}
 	e.watcher()
 	wg.Wait()
-	return e.wm["result_end"], e.err
+	res := "result_end"
+	if len(target) == 1 {
+		res = target[0]
+	}
+	return e.wm[res], e.err
 }
 
 func (e *Engine) watcher() {
@@ -93,7 +106,7 @@ func (e *Engine) worker(wg *sync.WaitGroup) {
 
 // eval will evaluate current rule.
 func (e *Engine) eval(index int) {
-	re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Rule, make(map[string]govaluate.ExpressionFunction))
+	re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Rule, e.rf)
 	if err != nil {
 		e.err = append(e.err, err)
 		return
@@ -105,20 +118,21 @@ func (e *Engine) eval(index int) {
 	}
 
 	if valid != nil && valid.(bool) {
-		ve, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Value, e.RuleFunctions)
-		if err == nil {
-			res, _ := ve.Evaluate(nil)
-
-			if e.Rules[index].Output != "" {
-				e.wmLock.Lock()
-				e.wm[e.Rules[index].Output] = res
-				e.wmLock.Unlock()
-				e.updateAgenda(e.Rules[index].Output)
-			}
-		} else {
+		ve, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Value, e.rf)
+		if err != nil {
 			e.err = append(e.err, err)
 			return
 		}
+
+		res, _ := ve.Evaluate(nil)
+
+		if e.Rules[index].Output != "" {
+			e.wmLock.Lock()
+			e.wm[e.Rules[index].Output] = res
+			e.wmLock.Unlock()
+			e.updateAgenda(e.Rules[index].Output)
+		}
+
 	}
 }
 
