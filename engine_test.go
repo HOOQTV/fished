@@ -1,6 +1,7 @@
 package fished
 
 import (
+	"errors"
 	"io/ioutil"
 	"testing"
 
@@ -56,4 +57,27 @@ func TestRunInvalidRule(t *testing.T) {
 
 	assert.Equal(t, nil, res, "should be true")
 	assert.Equal(t, 1, len(errs), "no errors")
+}
+
+func TestRuleFunction(t *testing.T) {
+	raw, _ := ioutil.ReadFile("./test/tc4.json")
+
+	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	var ruleRaw RuleRaw
+	json.Unmarshal(raw, &ruleRaw)
+
+	e := New(10)
+	e.Rules = ruleRaw.Data
+	e.Facts["example"] = "random"
+	e.RuleFunctions["set"] = func(arguments ...interface{}) (interface{}, error) {
+		if len(arguments) == 1 {
+			return arguments[0], nil
+		}
+		return nil, errors.New("Lack of arguments")
+	}
+
+	res, errs := e.Run()
+
+	assert.Equal(t, true, res, "should be true")
+	assert.Equal(t, 0, len(errs), "no errors")
 }
