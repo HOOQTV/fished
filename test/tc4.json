@@ -1,0 +1,22 @@
+{
+    "data": [
+        {
+            "input": ["example"],
+            "output": "value_example",
+            "rule": "true",
+            "value": "set('killer') == 'killer'"
+        },
+        {
+            "input": ["example"],
+            "output": "rule_example",
+            "rule": "set('killer') == 'killer'",
+            "value": "true"
+        },
+        {
+            "input": ["rule_example", "value_example"],
+            "output": "result_end",
+            "rule": "value_example == rule_example",
+            "value": "true"
+        }
+    ]
+}
