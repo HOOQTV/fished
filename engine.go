@@ -1,7 +1,6 @@
 package fished
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/knetic/govaluate"
@@ -145,7 +144,6 @@ func (e *Engine) updateAgenda(input string) {
 			}
 		}
 		if validInput == len(rule.Input) && validInput != 0 {
-			fmt.Println("Output target:", rule.Output, "Added")
 			e.work.Add(1)
 			e.Jobs <- i
 		}
