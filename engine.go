@@ -16,8 +16,8 @@ type Engine struct {
 	Jobs          chan int
 	Worker        int
 	work          sync.WaitGroup
-	wmLock        sync.Mutex
-	planLock      sync.Mutex
+	wmMutex       sync.Mutex
+	planMutex     sync.Mutex
 	err           []error
 	wm            map[string]interface{}
 	workingRules  map[string][]int
@@ -111,28 +111,27 @@ func (e *Engine) eval(index int) {
 			e.err = append(e.err, err)
 			return
 		}
-		e.wmLock.Lock()
+		e.wmMutex.Lock()
 		res, err := re.Evaluate(e.wm)
-		e.wmLock.Unlock()
+		e.wmMutex.Unlock()
 		if err != nil {
 			e.err = append(e.err, err)
 			return
 		}
 
-		e.wmLock.Lock()
+		e.wmMutex.Lock()
+		defer e.wmMutex.Unlock()
+
 		e.wm[e.Rules[index].Output] = res
-		e.wmLock.Unlock()
+
+		e.planMutex.Lock()
+		defer e.planMutex.Unlock()
 		e.updateAgenda(e.Rules[index].Output)
 	}
 }
 
 // Add jobs base on current working memory attribute
 func (e *Engine) updateAgenda(input string) {
-	e.planLock.Lock()
-	defer e.planLock.Unlock()
-	e.wmLock.Lock()
-	defer e.wmLock.Unlock()
-
 	rules := e.workingRules[input]
 	for _, i := range rules {
 		rule := e.Rules[i]
