@@ -1,7 +1,6 @@
 package fished
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/knetic/govaluate"
@@ -18,6 +17,7 @@ type Engine struct {
 	work          sync.WaitGroup
 	wmMutex       sync.Mutex
 	planMutex     sync.Mutex
+	runMutex      sync.Mutex
 	err           []error
 	wm            map[string]interface{}
 	workingRules  map[string][]int
@@ -43,7 +43,6 @@ var workerPoolSize = 10
 // New ...
 func New(worker int) *Engine {
 	e := &Engine{
-		Jobs:          make(chan int, worker*workerPoolSize),
 		Worker:        worker,
 		Facts:         make(map[string]interface{}),
 		RuleFunctions: make(map[string]RuleFunction),
@@ -54,6 +53,11 @@ func New(worker int) *Engine {
 
 // Run ...
 func (e *Engine) Run(target ...string) (interface{}, []error) {
+	e.runMutex.Lock()
+	defer e.runMutex.Unlock()
+
+	e.Jobs = make(chan int, e.Worker*workerPoolSize)
+
 	var wg sync.WaitGroup
 	e.wm = make(map[string]interface{})
 	for i, v := range e.Facts {
@@ -144,7 +148,6 @@ func (e *Engine) updateAgenda(input string) {
 			}
 		}
 		if validInput == len(rule.Input) && validInput != 0 {
-			fmt.Println("Output target:", rule.Output, "Added")
 			e.work.Add(1)
 			e.Jobs <- i
 		}

@@ -81,3 +81,20 @@ func TestRuleFunction(t *testing.T) {
 	assert.Equal(t, true, res, "should be true")
 	assert.Equal(t, 0, len(errs), "no errors")
 }
+
+func BenchmarkRun(b *testing.B) {
+	raw, _ := ioutil.ReadFile("./test/tc1.json")
+
+	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	var ruleRaw RuleRaw
+	json.Unmarshal(raw, &ruleRaw)
+
+	e := New(10)
+	e.Rules = ruleRaw.Data
+	e.Facts["account_partner"] = "hello"
+	e.Facts["account_region"] = "ID"
+
+	for i := 0; i < b.N; i++ {
+		e.Run()
+	}
+}
