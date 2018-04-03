@@ -18,6 +18,7 @@ type Rule struct {
 	Output 			string   `json:"output"`
 	Input  			[]string `json:"input"`
 	Expression   	string   `json:"expression"`
+	...
 }
 ```
 Engine:

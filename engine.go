@@ -28,6 +28,7 @@ type Rule struct {
 	Output     string   `json:"output"`
 	Input      []string `json:"input"`
 	Expression string   `json:"expression"`
+	ee         *govaluate.EvaluableExpression
 }
 
 // RuleRaw ...
@@ -110,21 +111,24 @@ func (e *Engine) worker(wg *sync.WaitGroup) {
 // eval will evaluate current rule.
 func (e *Engine) eval(index int) {
 	if e.Rules[index].Output != "" {
-		re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Expression, e.rf)
-		if err != nil {
-			e.err = append(e.err, err)
-			return
-		}
-		e.wmMutex.Lock()
-		res, err := re.Evaluate(e.wm)
-		e.wmMutex.Unlock()
-		if err != nil {
-			e.err = append(e.err, err)
-			return
+		if e.Rules[index].ee == nil {
+			re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Expression, e.rf)
+			if err != nil {
+				e.err = append(e.err, err)
+				return
+			}
+			e.Rules[index].ee = re
 		}
 
 		e.wmMutex.Lock()
 		defer e.wmMutex.Unlock()
+
+		res, err := e.Rules[index].ee.Evaluate(e.wm)
+
+		if err != nil {
+			e.err = append(e.err, err)
+			return
+		}
 
 		e.wm[e.Rules[index].Output] = res
 
