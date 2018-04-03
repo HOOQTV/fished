@@ -1,7 +1,6 @@
 package fished
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/knetic/govaluate"
@@ -16,8 +15,9 @@ type Engine struct {
 	Jobs          chan int
 	Worker        int
 	work          sync.WaitGroup
-	wmLock        sync.Mutex
-	planLock      sync.Mutex
+	wmMutex       sync.Mutex
+	planMutex     sync.Mutex
+	runMutex      sync.Mutex
 	err           []error
 	wm            map[string]interface{}
 	workingRules  map[string][]int
@@ -28,6 +28,7 @@ type Rule struct {
 	Output     string   `json:"output"`
 	Input      []string `json:"input"`
 	Expression string   `json:"expression"`
+	ee         *govaluate.EvaluableExpression
 }
 
 // RuleRaw ...
@@ -43,7 +44,6 @@ var workerPoolSize = 10
 // New ...
 func New(worker int) *Engine {
 	e := &Engine{
-		Jobs:          make(chan int, worker*workerPoolSize),
 		Worker:        worker,
 		Facts:         make(map[string]interface{}),
 		RuleFunctions: make(map[string]RuleFunction),
@@ -54,6 +54,11 @@ func New(worker int) *Engine {
 
 // Run ...
 func (e *Engine) Run(target ...string) (interface{}, []error) {
+	e.runMutex.Lock()
+	defer e.runMutex.Unlock()
+
+	e.Jobs = make(chan int, e.Worker*workerPoolSize)
+
 	var wg sync.WaitGroup
 	e.wm = make(map[string]interface{})
 	for i, v := range e.Facts {
@@ -106,33 +111,35 @@ func (e *Engine) worker(wg *sync.WaitGroup) {
 // eval will evaluate current rule.
 func (e *Engine) eval(index int) {
 	if e.Rules[index].Output != "" {
-		re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Expression, e.rf)
-		if err != nil {
-			e.err = append(e.err, err)
-			return
+		if e.Rules[index].ee == nil {
+			re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Expression, e.rf)
+			if err != nil {
+				e.err = append(e.err, err)
+				return
+			}
+			e.Rules[index].ee = re
 		}
-		e.wmLock.Lock()
-		res, err := re.Evaluate(e.wm)
-		e.wmLock.Unlock()
+
+		e.wmMutex.Lock()
+		defer e.wmMutex.Unlock()
+
+		res, err := e.Rules[index].ee.Evaluate(e.wm)
+
 		if err != nil {
 			e.err = append(e.err, err)
 			return
 		}
 
-		e.wmLock.Lock()
 		e.wm[e.Rules[index].Output] = res
-		e.wmLock.Unlock()
+
+		e.planMutex.Lock()
+		defer e.planMutex.Unlock()
 		e.updateAgenda(e.Rules[index].Output)
 	}
 }
 
 // Add jobs base on current working memory attribute
 func (e *Engine) updateAgenda(input string) {
-	e.planLock.Lock()
-	defer e.planLock.Unlock()
-	e.wmLock.Lock()
-	defer e.wmLock.Unlock()
-
 	rules := e.workingRules[input]
 	for _, i := range rules {
 		rule := e.Rules[i]
@@ -145,7 +152,6 @@ func (e *Engine) updateAgenda(input string) {
 			}
 		}
 		if validInput == len(rule.Input) && validInput != 0 {
-			fmt.Println("Output target:", rule.Output, "Added")
 			e.work.Add(1)
 			e.Jobs <- i
 		}
