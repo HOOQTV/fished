@@ -6,21 +6,25 @@ import (
 	"github.com/knetic/govaluate"
 )
 
+// Config ...
+type Config struct {
+	Worker         int
+	WorkerPoolSize int
+	Cache          bool
+}
+
 // Engine ...
 type Engine struct {
-	Facts         map[string]interface{}
-	Rules         []Rule
-	RuleFunctions map[string]RuleFunction
-	rf            map[string]govaluate.ExpressionFunction
-	Jobs          chan int
-	Worker        int
-	work          sync.WaitGroup
-	wmMutex       sync.Mutex
-	planMutex     sync.Mutex
-	runMutex      sync.Mutex
-	err           []error
-	wm            map[string]interface{}
-	workingRules  map[string][]int
+	Rules        []Rule
+	rf           map[string]govaluate.ExpressionFunction
+	Jobs         chan int
+	Config       *Config
+	work         sync.WaitGroup
+	wmMutex      sync.Mutex
+	runMutex     sync.Mutex
+	err          []error
+	wm           map[string]interface{}
+	workingRules map[string][]int
 }
 
 // Rule ...
@@ -29,6 +33,8 @@ type Rule struct {
 	Input      []string `json:"input"`
 	Expression string   `json:"expression"`
 	ee         *govaluate.EvaluableExpression
+	facts      map[string]interface{}
+	result     interface{}
 }
 
 // RuleRaw ...
@@ -42,31 +48,43 @@ type RuleFunction func(arguments ...interface{}) (interface{}, error)
 var workerPoolSize = 10
 
 // New ...
-func New(worker int) *Engine {
+func New(c *Config) *Engine {
+	cfg := &Config{
+		Worker:         1,
+		WorkerPoolSize: 20,
+		Cache:          false,
+	}
+	if c != nil {
+		if c.Worker > 0 {
+			cfg.Worker = c.Worker
+		}
+		if c.WorkerPoolSize > (0 + cfg.Worker) {
+			cfg.WorkerPoolSize = c.WorkerPoolSize
+		}
+		cfg.Cache = c.Cache
+	}
 	e := &Engine{
-		Worker:        worker,
-		Facts:         make(map[string]interface{}),
-		RuleFunctions: make(map[string]RuleFunction),
-		err:           []error{},
+		Config: cfg,
+		err:    []error{},
 	}
 	return e
 }
 
-// Run ...
-func (e *Engine) Run(target ...string) (interface{}, []error) {
-	e.runMutex.Lock()
-	defer e.runMutex.Unlock()
-
-	e.Jobs = make(chan int, e.Worker*workerPoolSize)
-
-	var wg sync.WaitGroup
+// SetFacts ...
+func (e *Engine) SetFacts(f map[string]interface{}) {
 	e.wm = make(map[string]interface{})
-	for i, v := range e.Facts {
+	for i, v := range f {
 		e.wm[i] = v
 	}
+}
+
+// SetRules ...
+func (e *Engine) SetRules(r []Rule) {
+	e.Rules = make([]Rule, len(r))
+	copy(e.Rules, r)
 
 	e.workingRules = make(map[string][]int)
-	for i, rule := range e.Rules {
+	for i, rule := range r {
 		for _, input := range rule.Input {
 			if e.workingRules[input] == nil {
 				e.workingRules[input] = []int{i}
@@ -75,14 +93,27 @@ func (e *Engine) Run(target ...string) (interface{}, []error) {
 			}
 		}
 	}
+}
 
+// SetRuleFunction ...
+func (e *Engine) SetRuleFunction(rf map[string]RuleFunction) {
 	e.rf = make(map[string]govaluate.ExpressionFunction)
-	for i, f := range e.RuleFunctions {
+	for i, f := range rf {
 		e.rf[i] = govaluate.ExpressionFunction(f)
 	}
+}
+
+// Run ...
+func (e *Engine) Run(target ...string) (interface{}, []error) {
+	e.runMutex.Lock()
+	defer e.runMutex.Unlock()
+
+	e.Jobs = make(chan int, e.Config.WorkerPoolSize)
+
+	var wg sync.WaitGroup
 
 	e.createAgenda()
-	for i := 0; i < e.Worker; i++ {
+	for i := 0; i < e.Config.Worker; i++ {
 		wg.Add(1)
 		go e.worker(&wg)
 	}
@@ -120,20 +151,20 @@ func (e *Engine) eval(index int) {
 			e.Rules[index].ee = re
 		}
 
-		e.wmMutex.Lock()
-		defer e.wmMutex.Unlock()
+		if e.Rules[index].result == nil || !e.Config.Cache {
+			result, err := e.Rules[index].ee.Evaluate(e.Rules[index].facts)
+			if err != nil {
+				e.err = append(e.err, err)
+				return
+			}
 
-		res, err := e.Rules[index].ee.Evaluate(e.wm)
-
-		if err != nil {
-			e.err = append(e.err, err)
-			return
+			e.Rules[index].result = result
 		}
 
-		e.wm[e.Rules[index].Output] = res
+		e.wmMutex.Lock()
+		defer e.wmMutex.Unlock()
+		e.wm[e.Rules[index].Output] = e.Rules[index].result
 
-		e.planMutex.Lock()
-		defer e.planMutex.Unlock()
 		e.updateAgenda(e.Rules[index].Output)
 	}
 }
@@ -144,10 +175,16 @@ func (e *Engine) updateAgenda(input string) {
 	for _, i := range rules {
 		rule := e.Rules[i]
 		validInput := 0
-		for attribute := range e.wm {
+		for attribute, value := range e.wm {
 			for _, input := range rule.Input {
 				if input == attribute {
 					validInput++
+					if rule.facts == nil {
+						rule.facts = make(map[string]interface{})
+					}
+					if rule.facts[attribute] == nil || !e.Config.Cache {
+						rule.facts[attribute] = value
+					}
 				}
 			}
 		}
@@ -155,6 +192,7 @@ func (e *Engine) updateAgenda(input string) {
 			e.work.Add(1)
 			e.Jobs <- i
 		}
+		e.Rules[i] = rule
 	}
 	delete(e.workingRules, input)
 }
