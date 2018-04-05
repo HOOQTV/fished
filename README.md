@@ -42,20 +42,25 @@ package main
 import "github.com/jonathansudibya/fished"
 
 func main() {
-	e := fished.New(10)
-	e.Rules = []Rule{
+	e := fished.New(nil)
+	e.SetRules([]Rule{
 		Rule{
 			Input: []string{"hello"},
 			Output: "result_end",
 			Expression: "hello == 'world'",
 		}
+	})
+	e.SetFacts = map[string]interface{}{
+		"hello": "world"
 	}
-	e.Facts["hello"] = "world"
 	res, errs := e.Run()
 
 	fmt.Println(res) // will result true
 }
 ```
+
+# Notes
+Remember it is more expensive to set new rules than to set facts.
 
 # Credits
 This project is powered by 
