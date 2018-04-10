@@ -22,6 +22,7 @@ type Engine struct {
 	work         sync.WaitGroup
 	wmMutex      sync.Mutex
 	runMutex     sync.Mutex
+	factsMutex   sync.Mutex
 	err          []error
 	wm           map[string]interface{}
 	workingRules map[string][]int
@@ -152,7 +153,9 @@ func (e *Engine) eval(index int) {
 		}
 
 		if e.Rules[index].result == nil || !e.Config.Cache {
+			e.factsMutex.Lock()
 			result, err := e.Rules[index].ee.Evaluate(e.Rules[index].facts)
+			e.factsMutex.Unlock()
 			if err != nil {
 				e.err = append(e.err, err)
 				return
@@ -179,12 +182,14 @@ func (e *Engine) updateAgenda(input string) {
 			for _, input := range rule.Input {
 				if input == attribute {
 					validInput++
+					e.factsMutex.Lock()
 					if rule.facts == nil {
 						rule.facts = make(map[string]interface{})
 					}
 					if rule.facts[attribute] == nil || !e.Config.Cache {
 						rule.facts[attribute] = value
 					}
+					e.factsMutex.Unlock()
 				}
 			}
 		}
@@ -194,7 +199,6 @@ func (e *Engine) updateAgenda(input string) {
 		}
 		e.Rules[i] = rule
 	}
-	delete(e.workingRules, input)
 }
 
 // initialize jobs

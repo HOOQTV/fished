@@ -211,3 +211,24 @@ func BenchmarkRun10(b *testing.B) {
 		e.Run()
 	}
 }
+
+func BenchmarkRun10Cached(b *testing.B) {
+	raw, _ := ioutil.ReadFile("./test/tc1.json")
+
+	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	var ruleRaw RuleRaw
+	json.Unmarshal(raw, &ruleRaw)
+
+	c.Worker = 10
+	c.Cache = true
+	e := New(c)
+	e.SetRules(ruleRaw.Data)
+	f := make(map[string]interface{})
+	f["account_partner"] = "hello"
+	f["account_region"] = "ID"
+	e.SetFacts(f)
+
+	for i := 0; i < b.N; i++ {
+		e.Run()
+	}
+}
