@@ -126,12 +126,17 @@ func (e *Engine) Run(target ...string) (interface{}, []error) {
 	if len(target) == 1 {
 		res = target[0]
 	}
+
 	return e.wm[res], e.err
 }
 
 func (e *Engine) watcher() {
 	e.work.Wait()
 	close(e.Jobs)
+
+	for _, rule := range e.Rules {
+		rule.hasExecuted = false
+	}
 }
 
 func (e *Engine) worker(wg *sync.WaitGroup) {
