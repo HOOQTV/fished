@@ -30,12 +30,13 @@ type Engine struct {
 
 // Rule ...
 type Rule struct {
-	Output     string   `json:"output"`
-	Input      []string `json:"input"`
-	Expression string   `json:"expression"`
-	ee         *govaluate.EvaluableExpression
-	facts      map[string]interface{}
-	result     interface{}
+	Output      string   `json:"output"`
+	Input       []string `json:"input"`
+	Expression  string   `json:"expression"`
+	ee          *govaluate.EvaluableExpression
+	facts       map[string]interface{}
+	result      interface{}
+	hasExecuted bool
 }
 
 // RuleRaw ...
@@ -118,18 +119,24 @@ func (e *Engine) Run(target ...string) (interface{}, []error) {
 		wg.Add(1)
 		go e.worker(&wg)
 	}
+
 	e.watcher()
 	wg.Wait()
 	res := "result_end"
 	if len(target) == 1 {
 		res = target[0]
 	}
+
 	return e.wm[res], e.err
 }
 
 func (e *Engine) watcher() {
 	e.work.Wait()
 	close(e.Jobs)
+
+	for _, rule := range e.Rules {
+		rule.hasExecuted = false
+	}
 }
 
 func (e *Engine) worker(wg *sync.WaitGroup) {
@@ -142,7 +149,7 @@ func (e *Engine) worker(wg *sync.WaitGroup) {
 
 // eval will evaluate current rule.
 func (e *Engine) eval(index int) {
-	if e.Rules[index].Output != "" {
+	if e.Rules[index].Output != "" && !e.Rules[index].hasExecuted {
 		if e.Rules[index].ee == nil {
 			re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Expression, e.rf)
 			if err != nil {
@@ -167,6 +174,7 @@ func (e *Engine) eval(index int) {
 		e.wmMutex.Lock()
 		defer e.wmMutex.Unlock()
 		e.wm[e.Rules[index].Output] = e.Rules[index].result
+		e.Rules[index].hasExecuted = true
 
 		e.updateAgenda(e.Rules[index].Output)
 	}
