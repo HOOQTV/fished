@@ -118,7 +118,7 @@ func (e *Engine) Run() error {
 	queue := make(chan string)
 	done := make(chan bool)
 
-	go taskMaster(task, queue, done)
+	go e.taskMaster(task, queue, done)
 
 	// Copy initial state to working memory
 	var wg sync.WaitGroup
@@ -136,11 +136,59 @@ func (e *Engine) Run() error {
 	return nil
 }
 
-func taskMaster(task, queue chan string, done chan bool) {
-	select {
-	case <-task:
-		// do task
-	case <-done:
-		return
+func (e *Engine) taskMaster(task, queue chan string, done chan bool) {
+	for {
+		select {
+		case <-task:
+			e.addAgenda(queue, done)
+		case <-done:
+			close(task)
+			close(queue)
+			close(done)
+			return
+		}
 	}
+}
+
+func (e *Engine) addAgenda(queue chan string, done chan bool) {
+	addingAgenda := false
+	for _, v := range e.rules {
+		if _, ok := e.usedRule[v.ID]; !ok {
+			validInput := 0
+			for i := 0; i < len(v.Input); i++ {
+				if _, err := e.workingMemory.Get(v.Input[i]); err != nil {
+					validInput++
+				}
+			}
+			if validInput == len(v.Input) {
+				queue <- v.ID
+				e.usedRule[v.ID] = nil
+				addingAgenda = true
+			}
+		}
+	}
+	if !addingAgenda {
+		done <- true
+	}
+}
+
+func (e *Engine) dispatcher(task, queue chan string, done chan bool) {
+	for job := range queue {
+		go e.eval(job, task, done)
+	}
+}
+
+func (e *Engine) eval(job string, task chan string, done chan bool) {
+	rule := e.rules[job]
+	facts := make(map[string]interface{})
+
+	for _, v := range rule.Input {
+		var fact interface{}
+		factBytes, _ := e.workingMemory.Get(v)
+		getInterface(factBytes, fact)
+		facts[v] = fact
+	}
+
+	parsedExpression := RuleBook[rule.ID]
+	r, err := conditions.Evaluate(parsedExpression, facts)
 }
