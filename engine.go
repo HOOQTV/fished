@@ -22,10 +22,10 @@ type (
 	// RuleOutput ...
 	RuleOutput struct {
 		Type              string
-		Value             *string
+		Value             interface{}
 		Function          *string
-		Parameter         *string
-		ConstantParameter *string
+		Parameter         *[]string
+		ConstantParameter *[]string
 	}
 
 	// ruleObject ...
@@ -44,16 +44,16 @@ type (
 	}
 
 	// RuleFunction ..
-	RuleFunction func(...interface{}) (interface{}, error)
+	RuleFunction func(map[string]interface{}) (interface{}, error)
 )
 
 var (
 	// RuleBook ...
-	RuleBook map[string]*conditions.Parser
+	RuleBook map[string]conditions.Expr
 )
 
 func init() {
-	RuleBook = make(map[string]*conditions.Parser)
+	RuleBook = make(map[string]conditions.Expr)
 }
 
 // New ...
@@ -90,7 +90,8 @@ func (e *Engine) SetRules(rules []Rule) error {
 			ruleHash := hex.EncodeToString(getMD5Hash([]byte(v.Expression)))
 			v.ID = ruleHash
 
-			parsedExpression := conditions.NewParser(strings.NewReader(v.Expression))
+			parser := conditions.NewParser(strings.NewReader(v.Expression))
+			parsedExpression, _ := parser.Parse()
 
 			if _, ok := RuleBook[ruleHash]; !ok {
 				RuleBook[ruleHash] = parsedExpression
@@ -119,6 +120,7 @@ func (e *Engine) Run() error {
 	done := make(chan bool)
 
 	go e.taskMaster(task, queue, done)
+	go e.dispatcher(task, queue, done)
 
 	// Copy initial state to working memory
 	var wg sync.WaitGroup
@@ -190,5 +192,48 @@ func (e *Engine) eval(job string, task chan string, done chan bool) {
 	}
 
 	parsedExpression := RuleBook[rule.ID]
-	r, err := conditions.Evaluate(parsedExpression, facts)
+	correct, err := conditions.Evaluate(parsedExpression, facts)
+	if err != nil {
+		done <- true
+	}
+
+	if correct {
+		for k, v := range rule.Output {
+			if v.Value != nil {
+				outputBytes, _ := getBytes(v.Value)
+				e.workingMemory.Set(k, outputBytes)
+			} else if v.Function != nil {
+				f := e.ruleFunctions[*v.Function]
+				inputs := make(map[string]interface{})
+				for _, key := range *v.Parameter {
+					paramBytes, _ := e.workingMemory.Get(key)
+					var param interface{}
+					getInterface(paramBytes, param)
+					inputs[key] = param
+				}
+
+				result, _ := f(inputs)
+
+				if v.Type == "single" {
+					resultBytes, _ := getBytes(result)
+					e.workingMemory.Set(k, resultBytes)
+					task <- k
+				} else if v.Type == "map" {
+					if mapResult, ok := result.(map[string]interface{}); ok {
+						for resKey, resVal := range mapResult {
+							newKey := k + "_" + resKey
+							resultBytes, _ := getBytes(resVal)
+							e.workingMemory.Set(newKey, resultBytes)
+							task <- newKey
+						}
+					}
+					// TODO : ADD ERROR HANDLING
+				}
+			}
+			if k == "result_end" {
+				done <- true
+				break
+			}
+		}
+	}
 }
