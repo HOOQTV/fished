@@ -4,9 +4,7 @@ import (
 	"encoding/hex"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/allegro/bigcache"
 	"github.com/oleksandr/conditions"
 )
 
@@ -38,9 +36,11 @@ type (
 	Engine struct {
 		ruleFunctions map[string]RuleFunction
 		initialState  map[string]interface{}
-		workingMemory *bigcache.BigCache
+		workingMemory sync.Map
 		rules         map[string]Rule
 		usedRule      map[string]interface{}
+		Exit          bool
+		working       sync.WaitGroup
 	}
 
 	// RuleFunction ..
@@ -49,32 +49,21 @@ type (
 
 var (
 	// RuleBook ...
-	RuleBook map[string]conditions.Expr
+	RuleBook sync.Map
 )
-
-func init() {
-	RuleBook = make(map[string]conditions.Expr)
-}
 
 // New ...
 func New() (*Engine, error) {
-	// TODO: Make eviction time configurable
-	wm, err := bigcache.NewBigCache(bigcache.DefaultConfig(10 * time.Minute))
-	if err != nil {
-		return nil, err
-	}
-
 	return &Engine{
-		initialState:  make(map[string]interface{}),
-		workingMemory: wm,
-		rules:         make(map[string]Rule),
+		initialState: make(map[string]interface{}),
+		rules:        make(map[string]Rule),
 	}, nil
 }
 
 // SetFacts ...
 func (e *Engine) SetFacts(facts map[string]interface{}) error {
-	for k, v := range facts {
-		e.initialState[k] = v
+	for key, value := range facts {
+		e.initialState[key] = value
 	}
 	return nil
 }
@@ -84,21 +73,20 @@ func (e *Engine) SetRules(rules []Rule) error {
 	var wg sync.WaitGroup
 	e.rules = make(map[string]Rule)
 	e.usedRule = make(map[string]interface{})
-	for _, v := range rules {
+	for _, rule := range rules {
 		wg.Add(1)
-		go func() {
-			ruleHash := hex.EncodeToString(getMD5Hash([]byte(v.Expression)))
-			v.ID = ruleHash
+		go func(rule Rule) {
+			ruleHash := hex.EncodeToString(getMD5Hash([]byte(rule.Expression)))
+			rule.ID = ruleHash
 
-			parser := conditions.NewParser(strings.NewReader(v.Expression))
+			parser := conditions.NewParser(strings.NewReader(rule.Expression))
 			parsedExpression, _ := parser.Parse()
 
-			if _, ok := RuleBook[ruleHash]; !ok {
-				RuleBook[ruleHash] = parsedExpression
-			}
-			e.rules[ruleHash] = v
+			RuleBook.Store(ruleHash, parsedExpression)
+
+			e.rules[ruleHash] = rule
 			wg.Done()
-		}()
+		}(rule)
 	}
 	wg.Wait()
 	return nil
@@ -106,15 +94,15 @@ func (e *Engine) SetRules(rules []Rule) error {
 
 // SetRuleFunctions ...
 func (e *Engine) SetRuleFunctions(rf map[string]RuleFunction) error {
-	for k, v := range rf {
-		e.ruleFunctions[k] = v
+	for key, value := range rf {
+		e.ruleFunctions[key] = value
 	}
 
 	return nil
 }
 
 // Run ...
-func (e *Engine) Run() error {
+func (e *Engine) Run() (interface{}, error) {
 	task := make(chan string)
 	queue := make(chan string)
 	done := make(chan bool)
@@ -124,18 +112,24 @@ func (e *Engine) Run() error {
 
 	// Copy initial state to working memory
 	var wg sync.WaitGroup
-	for k, v := range e.initialState {
+	for key, value := range e.initialState {
 		wg.Add(1)
-		go func() {
-			b, _ := getBytes(v)
-			e.workingMemory.Set(k, b)
-			task <- k
+		go func(key string, value interface{}) {
+			e.workingMemory.Store(key, value)
+			task <- key
 			wg.Done()
-		}()
+		}(key, value)
 	}
 	wg.Wait()
 
-	return nil
+	result, _ := e.workingMemory.Load("result_end")
+
+	// Clean up
+	e.workingMemory.Range(func(key, value interface{}) bool {
+		e.workingMemory.Delete(key)
+		return true
+	})
+	return result, nil
 }
 
 func (e *Engine) taskMaster(task, queue chan string, done chan bool) {
@@ -158,7 +152,7 @@ func (e *Engine) addAgenda(queue chan string, done chan bool) {
 		if _, ok := e.usedRule[v.ID]; !ok {
 			validInput := 0
 			for i := 0; i < len(v.Input); i++ {
-				if _, err := e.workingMemory.Get(v.Input[i]); err != nil {
+				if _, ok := e.workingMemory.Load(v.Input[i]); ok {
 					validInput++
 				}
 			}
@@ -170,7 +164,14 @@ func (e *Engine) addAgenda(queue chan string, done chan bool) {
 		}
 	}
 	if !addingAgenda {
-		done <- true
+		e.working.Wait()
+		if e.Exit {
+			done <- true
+			return
+		}
+		e.Exit = true
+	} else if e.Exit {
+		e.Exit = false
 	}
 }
 
@@ -181,18 +182,18 @@ func (e *Engine) dispatcher(task, queue chan string, done chan bool) {
 }
 
 func (e *Engine) eval(job string, task chan string, done chan bool) {
+	e.working.Add(1)
+	defer e.working.Done()
+
 	rule := e.rules[job]
 	facts := make(map[string]interface{})
 
 	for _, v := range rule.Input {
-		var fact interface{}
-		factBytes, _ := e.workingMemory.Get(v)
-		getInterface(factBytes, fact)
-		facts[v] = fact
+		facts[v], _ = e.workingMemory.Load(v)
 	}
 
-	parsedExpression := RuleBook[rule.ID]
-	correct, err := conditions.Evaluate(parsedExpression, facts)
+	parsedExpression, _ := RuleBook.Load(rule.ID)
+	correct, err := conditions.Evaluate(parsedExpression.(conditions.Expr), facts)
 	if err != nil {
 		done <- true
 	}
@@ -200,30 +201,24 @@ func (e *Engine) eval(job string, task chan string, done chan bool) {
 	if correct {
 		for k, v := range rule.Output {
 			if v.Value != nil {
-				outputBytes, _ := getBytes(v.Value)
-				e.workingMemory.Set(k, outputBytes)
+				e.workingMemory.Store(k, v)
 			} else if v.Function != nil {
 				f := e.ruleFunctions[*v.Function]
 				inputs := make(map[string]interface{})
 				for _, key := range *v.Parameter {
-					paramBytes, _ := e.workingMemory.Get(key)
-					var param interface{}
-					getInterface(paramBytes, param)
-					inputs[key] = param
+					inputs[key], _ = e.workingMemory.Load(key)
 				}
 
 				result, _ := f(inputs)
 
 				if v.Type == "single" {
-					resultBytes, _ := getBytes(result)
-					e.workingMemory.Set(k, resultBytes)
+					e.workingMemory.Store(k, result)
 					task <- k
 				} else if v.Type == "map" {
 					if mapResult, ok := result.(map[string]interface{}); ok {
 						for resKey, resVal := range mapResult {
 							newKey := k + "_" + resKey
-							resultBytes, _ := getBytes(resVal)
-							e.workingMemory.Set(newKey, resultBytes)
+							e.workingMemory.Store(newKey, resVal)
 							task <- newKey
 						}
 					}
