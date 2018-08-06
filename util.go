@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/gob"
+	"sync"
 )
 
 func getBytes(data interface{}) ([]byte, error) {
@@ -30,4 +31,12 @@ func getMD5Hash(bs []byte) []byte {
 	hasher := md5.New()
 	hasher.Write(bs)
 	return hasher.Sum(nil)
+}
+
+func flushSyncMap(m *sync.Map) bool {
+	m.Range(func(key, value interface{}) bool {
+		m.Delete(key)
+		return true
+	})
+	return true
 }

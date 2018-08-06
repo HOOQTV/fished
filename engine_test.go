@@ -46,6 +46,7 @@ func TestRun(t *testing.T) {
 	err = e.SetFacts(facts)
 	assert.NoError(t, err)
 
-	err = e.Run()
+	r, err := e.Run()
 	assert.NoError(t, err)
+	assert.NotEmpty(t, r)
 }
