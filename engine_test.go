@@ -211,14 +211,14 @@ func BenchmarkRun1Cached(b *testing.B) {
 	}
 }
 
-func BenchmarkRun10(b *testing.B) {
+func BenchmarkRun4(b *testing.B) {
 	raw, _ := ioutil.ReadFile("./test/tc1.json")
 
 	var json = jsoniter.ConfigCompatibleWithStandardLibrary
 	var ruleRaw RuleRaw
 	json.Unmarshal(raw, &ruleRaw)
 
-	c.Worker = 10
+	c.Worker = 4
 	e := New(c)
 	e.SetRules(ruleRaw.Data)
 	f := make(map[string]interface{})
@@ -231,14 +231,14 @@ func BenchmarkRun10(b *testing.B) {
 	}
 }
 
-func BenchmarkRun10Cached(b *testing.B) {
+func BenchmarkRun4Cached(b *testing.B) {
 	raw, _ := ioutil.ReadFile("./test/tc1.json")
 
 	var json = jsoniter.ConfigCompatibleWithStandardLibrary
 	var ruleRaw RuleRaw
 	json.Unmarshal(raw, &ruleRaw)
 
-	c.Worker = 10
+	c.Worker = 4
 	c.Cache = true
 	e := New(c)
 	e.SetRules(ruleRaw.Data)

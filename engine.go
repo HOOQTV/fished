@@ -20,9 +20,9 @@ type Engine struct {
 	Jobs         chan int
 	Config       *Config
 	work         sync.WaitGroup
-	wmMutex      sync.Mutex
+	wmMutex      sync.RWMutex
 	runMutex     sync.Mutex
-	factsMutex   sync.Mutex
+	factsMutex   sync.RWMutex
 	err          []error
 	wm           map[string]interface{}
 	workingRules map[string][]int
@@ -160,25 +160,29 @@ func (e *Engine) eval(index int) {
 		}
 
 		if e.Rules[index].result == nil || !e.Config.Cache {
-			e.factsMutex.Lock()
+			e.factsMutex.RLock()
 			result, err := e.Rules[index].ee.Evaluate(e.Rules[index].facts)
-			resBool, ok := result.(bool)
-			if !ok || resBool {
-				e.Rules[index].result = result
-				e.wmMutex.Lock()
-				e.wm[e.Rules[index].Output] = result
-				e.wmMutex.Unlock()
-			}
-			e.factsMutex.Unlock()
+			e.factsMutex.RUnlock()
 			if err != nil {
 				e.err = append(e.err, err)
 				return
 			}
 
+			resBool, ok := result.(bool)
+			if (result != nil && !ok) || resBool {
+				e.Rules[index].result = result
+			}
+
+		}
+
+		if e.Rules[index].result != nil {
+			e.wmMutex.Lock()
+			e.wm[e.Rules[index].Output] = e.Rules[index].result
+			e.wmMutex.Unlock()
+			e.updateAgenda(e.Rules[index].Output)
 		}
 
 		e.Rules[index].hasExecuted = true
-		e.updateAgenda(e.Rules[index].Output)
 	}
 }
 
@@ -188,6 +192,7 @@ func (e *Engine) updateAgenda(input string) {
 	for _, i := range rules {
 		rule := e.Rules[i]
 		validInput := 0
+		e.wmMutex.RLock()
 		for attribute, value := range e.wm {
 			for _, input := range rule.Input {
 				if input == attribute {
@@ -203,6 +208,7 @@ func (e *Engine) updateAgenda(input string) {
 				}
 			}
 		}
+		e.wmMutex.RUnlock()
 		if validInput == len(rule.Input) && validInput != 0 {
 			e.work.Add(1)
 			e.Jobs <- i
