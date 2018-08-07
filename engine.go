@@ -162,20 +162,22 @@ func (e *Engine) eval(index int) {
 		if e.Rules[index].result == nil || !e.Config.Cache {
 			e.factsMutex.Lock()
 			result, err := e.Rules[index].ee.Evaluate(e.Rules[index].facts)
+			resBool, ok := result.(bool)
+			if !ok || resBool {
+				e.Rules[index].result = result
+				e.wmMutex.Lock()
+				e.wm[e.Rules[index].Output] = result
+				e.wmMutex.Unlock()
+			}
 			e.factsMutex.Unlock()
 			if err != nil {
 				e.err = append(e.err, err)
 				return
 			}
 
-			e.Rules[index].result = result
 		}
 
-		e.wmMutex.Lock()
-		defer e.wmMutex.Unlock()
-		e.wm[e.Rules[index].Output] = e.Rules[index].result
 		e.Rules[index].hasExecuted = true
-
 		e.updateAgenda(e.Rules[index].Output)
 	}
 }

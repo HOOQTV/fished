@@ -34,6 +34,25 @@ func TestRun(t *testing.T) {
 	assert.Equal(t, 0, len(errs), "no errors")
 }
 
+func TestRunBlockedPath(t *testing.T) {
+	raw, _ := ioutil.ReadFile("./test/tc5.json")
+
+	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	var ruleRaw RuleRaw
+	json.Unmarshal(raw, &ruleRaw)
+
+	e := New(c)
+	e.SetRules(ruleRaw.Data)
+	f := make(map[string]interface{})
+	f["account_partner"] = "hello"
+	f["account_region"] = "ID"
+	e.SetFacts(f)
+	res, errs := e.Run()
+
+	assert.Equal(t, nil, res, "should be nil")
+	assert.Equal(t, 0, len(errs), "no errors")
+}
+
 func TestRunNil(t *testing.T) {
 	raw, _ := ioutil.ReadFile("./test/tc1.json")
 

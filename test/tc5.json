@@ -1,0 +1,34 @@
+{
+  "data": [
+      {
+          "input": ["account_partner"],
+          "output": "account_type",
+          "expression": "account_partner == 'hello' ? 'free' : 'paid'"
+      },
+      {
+          "input": ["account_partner"],
+          "output": "flight_type",
+          "expression": "account_partner == 'hello' ? 'paid' : 'free'"
+      },
+      {
+          "input": ["flight_type"],
+          "output": "flight_type_eligible",
+          "expression": "flight_type == 'free'"
+      },
+      {
+          "input": ["account_type"],
+          "output": "account_type_eligible",
+          "expression": "account_type == 'free'"
+      },
+      {
+          "input": ["account_region"],
+          "output": "account_region_eligible",
+          "expression": "account_region == 'ID'"
+      },
+      {
+          "input": ["account_type_eligible", "flight_type_eligible", "account_region_eligible"],
+          "output": "result_end",
+          "expression": "account_type_eligible && flight_type_eligible && account_region_eligible"
+      }
+  ]
+}
