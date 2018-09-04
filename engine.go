@@ -169,11 +169,9 @@ func (e *Engine) eval(index int) {
 				return
 			}
 
-			resBool, ok := result.(bool)
-			if (result != nil && !ok) || resBool {
+			if result != nil {
 				e.Rules[index].result = result
 			}
-
 		}
 
 		if e.Rules[index].result != nil {
