@@ -150,6 +150,7 @@ func (e *Engine) worker(wg *sync.WaitGroup) {
 // eval will evaluate current rule.
 func (e *Engine) eval(index int) {
 	if e.Rules[index].Output != "" && !e.Rules[index].hasExecuted {
+		e.Rules[index].hasExecuted = true
 		if e.Rules[index].ee == nil {
 			re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Expression, e.rf)
 			if err != nil {
@@ -181,8 +182,6 @@ func (e *Engine) eval(index int) {
 			e.wmMutex.Unlock()
 			e.updateAgenda(e.Rules[index].Output)
 		}
-
-		e.Rules[index].hasExecuted = true
 	}
 }
 
