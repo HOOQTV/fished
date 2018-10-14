@@ -1,253 +1,169 @@
 package fished
 
 import (
-	"errors"
 	"io/ioutil"
+	"os"
+	"runtime"
 	"testing"
 
-	jsoniter "github.com/json-iterator/go"
+	"github.com/json-iterator/go"
 	"github.com/stretchr/testify/assert"
 )
 
-var c = &Config{
-	Worker:         1,
-	WorkerPoolSize: 20,
-	Cache:          false,
-}
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 func TestRun(t *testing.T) {
-	raw, _ := ioutil.ReadFile("./test/tc1.json")
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	e := New(c)
-	e.SetRules(ruleRaw.Data)
-	f := make(map[string]interface{})
-	f["account_partner"] = "hello"
-	f["account_region"] = "ID"
-	e.SetFacts(f)
-	res, errs := e.Run()
-
-	assert.Equal(t, true, res, "should be true")
-	assert.Equal(t, 0, len(errs), "no errors")
-}
-
-func TestRunBlockedPath(t *testing.T) {
-	raw, _ := ioutil.ReadFile("./test/tc5.json")
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	e := New(c)
-	e.SetRules(ruleRaw.Data)
-	f := make(map[string]interface{})
-	f["account_partner"] = "hello"
-	f["account_region"] = "ID"
-	e.SetFacts(f)
-	res, errs := e.Run()
-
-	assert.Equal(t, nil, res, "should be nil")
-	assert.Equal(t, 0, len(errs), "no errors")
-}
-
-func TestRunNil(t *testing.T) {
-	raw, _ := ioutil.ReadFile("./test/tc1.json")
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	e := New(nil)
-	e.SetRules(ruleRaw.Data)
-	f := make(map[string]interface{})
-	f["account_partner"] = "hello"
-	f["account_region"] = "ID"
-	e.SetFacts(f)
-	res, errs := e.Run()
-
-	assert.Equal(t, true, res, "should be true")
-	assert.Equal(t, 0, len(errs), "no errors")
-}
-
-func TestRunInvalidRule(t *testing.T) {
-	raw, _ := ioutil.ReadFile("./test/tc2.json")
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	e := New(c)
-	e.SetRules(ruleRaw.Data)
-	f := make(map[string]interface{})
-	f["account_partner"] = "hello"
-	e.SetFacts(f)
-	res, errs := e.Run()
-
-	assert.Equal(t, nil, res, "should be nil")
-	assert.Equal(t, 1, len(errs), "no errors")
-}
-
-func TestRunSpecifyEndResult(t *testing.T) {
-	raw, _ := ioutil.ReadFile("./test/tc3.json")
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	e := New(c)
-	e.SetRules(ruleRaw.Data)
-	f := make(map[string]interface{})
-	f["account_partner"] = "hello"
-	f["account_region"] = "ID"
-	e.SetFacts(f)
-	res, errs := e.Run("isEligible")
-
-	assert.Equal(t, true, res, "should be true")
-	assert.Equal(t, 0, len(errs), "no errors")
-}
-
-func TestRuleFunction(t *testing.T) {
-	raw, _ := ioutil.ReadFile("./test/tc4.json")
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	e := New(c)
-	f := make(map[string]interface{})
-	f["example"] = "random"
-	rf := make(map[string]RuleFunction)
-	rf["set"] = func(arguments ...interface{}) (interface{}, error) {
-		if len(arguments) == 1 {
-			return arguments[0], nil
-		}
-		return nil, errors.New("Lack of arguments")
+	tc := []struct {
+		Name           string
+		TCFile         string
+		Facts          map[string]interface{}
+		RuleFunction   map[string]RuleFunction
+		Target         string
+		Worker         int
+		ExpectedResult interface{}
+		IsError        bool
+	}{
+		{
+			Name:   "test",
+			TCFile: "./test/tc1.json",
+			Facts: map[string]interface{}{
+				"account_partner": "hello",
+				"account_region":  "ID",
+				"flight_type":     "free",
+			},
+			ExpectedResult: true,
+			IsError:        false,
+			Worker:         DefaultWorker,
+			Target:         DefaultTarget,
+		},
 	}
-	e.SetRules(ruleRaw.Data)
-	e.SetFacts(f)
-	e.SetRuleFunction(rf)
 
-	res, errs := e.Run()
+	for _, test := range tc {
+		t.Run(test.Name, func(t *testing.T) {
+			// Open our jsonFile
+			jsonFile, err := os.Open(test.TCFile)
+			// if we os.Open returns an error then handle it
+			if !assert.Nil(t, err) {
+				return
+			}
 
-	assert.Equal(t, true, res, "should be true")
-	assert.Equal(t, 0, len(errs), "no errors")
-}
+			// defer the closing of our jsonFile so that we can parse it later on
+			defer jsonFile.Close()
 
-func BenchmarkFullRemake(b *testing.B) {
-	raw, _ := ioutil.ReadFile("./test/tc1.json")
+			// read our opened xmlFile as a byte array.
+			byteValue, _ := ioutil.ReadAll(jsonFile)
 
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
+			var ruleMap struct {
+				Data []Rule `json:"data"`
+			}
 
-	for i := 0; i < b.N; i++ {
-		e := New(c)
-		e.SetRules(ruleRaw.Data)
-		f := make(map[string]interface{})
-		f["account_partner"] = "hello"
-		f["account_region"] = "ID"
-		e.SetFacts(f)
-		e.Run()
+			err = json.Unmarshal(byteValue, &ruleMap)
+			if !assert.Nil(t, err) {
+				return
+			}
+
+			e := New()
+			e.Set(test.Facts, ruleMap.Data, test.RuleFunction)
+			res, errs := e.Run(test.Target, test.Worker)
+			if test.IsError {
+				assert.NotNil(t, errs)
+			} else {
+				if assert.NotNil(t, res) {
+					assert.Equal(t, test.ExpectedResult, res)
+				}
+			}
+		})
 	}
 }
 
-func BenchmarkResetFacts(b *testing.B) {
-	raw, _ := ioutil.ReadFile("./test/tc1.json")
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	e := New(c)
-	e.SetRules(ruleRaw.Data)
-	for i := 0; i < b.N; i++ {
-		f := make(map[string]interface{})
-		f["account_partner"] = "hello"
-		f["account_region"] = "ID"
-		e.SetFacts(f)
-		e.Run()
+func BenchmarkRun(b *testing.B) {
+	tc := []struct {
+		Name           string
+		TCFile         string
+		Facts          map[string]interface{}
+		RuleFunction   map[string]RuleFunction
+		Target         string
+		Worker         int
+		ExpectedResult interface{}
+		IsError        bool
+	}{
+		{
+			Name:   "DefaultWorker",
+			TCFile: "./test/tc1.json",
+			Facts: map[string]interface{}{
+				"account_partner": "hello",
+				"account_region":  "ID",
+				"flight_type":     "free",
+			},
+			ExpectedResult: true,
+			IsError:        false,
+			Worker:         DefaultWorker,
+			Target:         DefaultTarget,
+		},
+		{
+			Name:   "1 Worker",
+			TCFile: "./test/tc1.json",
+			Facts: map[string]interface{}{
+				"account_partner": "hello",
+				"account_region":  "ID",
+				"flight_type":     "free",
+			},
+			ExpectedResult: true,
+			IsError:        false,
+			Worker:         1,
+			Target:         DefaultTarget,
+		},
+		{
+			Name:   "Equal CPU Count",
+			TCFile: "./test/tc1.json",
+			Facts: map[string]interface{}{
+				"account_partner": "hello",
+				"account_region":  "ID",
+				"flight_type":     "free",
+			},
+			ExpectedResult: true,
+			IsError:        false,
+			Worker:         runtime.NumCPU(),
+			Target:         DefaultTarget,
+		},
+		{
+			Name:   "Double CPU Count",
+			TCFile: "./test/tc1.json",
+			Facts: map[string]interface{}{
+				"account_partner": "hello",
+				"account_region":  "ID",
+				"flight_type":     "free",
+			},
+			ExpectedResult: true,
+			IsError:        false,
+			Worker:         runtime.NumCPU() * 2,
+			Target:         DefaultTarget,
+		},
 	}
-}
 
-func BenchmarkRun1(b *testing.B) {
-	raw, _ := ioutil.ReadFile("./test/tc1.json")
+	for _, test := range tc {
+		b.Run(test.Name, func(b *testing.B) {
+			// Open our jsonFile
+			jsonFile, _ := os.Open(test.TCFile)
+			// if we os.Open returns an error then handle it
 
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
+			// defer the closing of our jsonFile so that we can parse it later on
+			defer jsonFile.Close()
 
-	e := New(c)
-	e.SetRules(ruleRaw.Data)
-	f := make(map[string]interface{})
-	f["account_partner"] = "hello"
-	f["account_region"] = "ID"
-	e.SetFacts(f)
+			// read our opened xmlFile as a byte array.
+			byteValue, _ := ioutil.ReadAll(jsonFile)
 
-	for i := 0; i < b.N; i++ {
-		e.Run()
-	}
-}
+			var ruleMap struct {
+				Data []Rule `json:"data"`
+			}
 
-func BenchmarkRun1Cached(b *testing.B) {
-	raw, _ := ioutil.ReadFile("./test/tc1.json")
+			json.Unmarshal(byteValue, &ruleMap)
 
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	c.Cache = true
-	e := New(c)
-	e.SetRules(ruleRaw.Data)
-	f := make(map[string]interface{})
-	f["account_partner"] = "hello"
-	f["account_region"] = "ID"
-	e.SetFacts(f)
-
-	for i := 0; i < b.N; i++ {
-		e.Run()
-	}
-}
-
-func BenchmarkRun4(b *testing.B) {
-	raw, _ := ioutil.ReadFile("./test/tc1.json")
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	c.Worker = 4
-	e := New(c)
-	e.SetRules(ruleRaw.Data)
-	f := make(map[string]interface{})
-	f["account_partner"] = "hello"
-	f["account_region"] = "ID"
-	e.SetFacts(f)
-
-	for i := 0; i < b.N; i++ {
-		e.Run()
-	}
-}
-
-func BenchmarkRun4Cached(b *testing.B) {
-	raw, _ := ioutil.ReadFile("./test/tc1.json")
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
-	var ruleRaw RuleRaw
-	json.Unmarshal(raw, &ruleRaw)
-
-	c.Worker = 4
-	c.Cache = true
-	e := New(c)
-	e.SetRules(ruleRaw.Data)
-	f := make(map[string]interface{})
-	f["account_partner"] = "hello"
-	f["account_region"] = "ID"
-	e.SetFacts(f)
-
-	for i := 0; i < b.N; i++ {
-		e.Run()
+			e := New()
+			e.Set(test.Facts, ruleMap.Data, test.RuleFunction)
+			for i := 0; i < b.N; i++ {
+				e.Run(test.Target, test.Worker)
+			}
+		})
 	}
 }
