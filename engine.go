@@ -40,8 +40,8 @@ type (
 	// Runtime is an struct for each time Engine.Run() is called
 	Runtime struct {
 		Facts      map[string]interface{}
-		JobCh      chan Job
-		ResultCh   chan EvalResult
+		JobCh      chan *Job
+		ResultCh   chan *EvalResult
 		UsedRule   map[int]struct{}
 		FactsMutex sync.RWMutex
 		WorkerWg   sync.WaitGroup
@@ -168,8 +168,8 @@ func (e *Engine) Run(target string, worker int) (interface{}, []error) {
 
 	r := &Runtime{
 		Facts:    facts,
-		JobCh:    make(chan Job, len(e.Rules)),
-		ResultCh: make(chan EvalResult, len(e.Rules)),
+		JobCh:    make(chan *Job, len(e.Rules)),
+		ResultCh: make(chan *EvalResult, len(e.Rules)),
 		UsedRule: make(map[int]struct{}),
 	}
 
@@ -236,7 +236,7 @@ func (e *Engine) Run(target string, worker int) (interface{}, []error) {
 				}
 			}
 
-			j := Job{
+			j := &Job{
 				ParsedExpression: parsedExpression.(*govaluate.EvaluableExpression),
 				Output:           rule.Output,
 			}
@@ -272,8 +272,8 @@ func (e *Engine) Run(target string, worker int) (interface{}, []error) {
 }
 
 // Evaluate will evaluate each job in runtime
-func (r *Runtime) Evaluate(job Job, result chan<- EvalResult) {
-	evalResult := EvalResult{
+func (r *Runtime) Evaluate(job *Job, result chan<- *EvalResult) {
+	evalResult := &EvalResult{
 		Key: job.Output,
 	}
 
