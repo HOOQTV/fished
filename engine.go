@@ -1,222 +1,294 @@
 package fished
 
 import (
+	"runtime"
 	"sync"
+	"time"
 
 	"github.com/knetic/govaluate"
+	"github.com/patrickmn/go-cache"
 )
 
-// Config ...
-type Config struct {
-	Worker         int
-	WorkerPoolSize int
-	Cache          bool
-}
+var (
+	//DefaultTarget is the default target facts
+	DefaultTarget = "result_end"
 
-// Engine ...
-type Engine struct {
-	Rules        []Rule
-	rf           map[string]govaluate.ExpressionFunction
-	Jobs         chan int
-	Config       *Config
-	work         sync.WaitGroup
-	wmMutex      sync.RWMutex
-	runMutex     sync.Mutex
-	factsMutex   sync.RWMutex
-	err          []error
-	wm           map[string]interface{}
-	workingRules map[string][]int
-}
+	// DefaultWorker is the default worker for Engine
+	DefaultWorker = 0
+)
 
-// Rule ...
-type Rule struct {
-	Output      string   `json:"output"`
-	Input       []string `json:"input"`
-	Expression  string   `json:"expression"`
-	ee          *govaluate.EvaluableExpression
-	facts       map[string]interface{}
-	result      interface{}
-	hasExecuted bool
-}
-
-// RuleRaw ...
-type RuleRaw struct {
-	Data []Rule `json:"data"`
-}
-
-// RuleFunction ...
-type RuleFunction func(arguments ...interface{}) (interface{}, error)
-
-var workerPoolSize = 10
-
-// New ...
-func New(c *Config) *Engine {
-	cfg := &Config{
-		Worker:         1,
-		WorkerPoolSize: 20,
-		Cache:          false,
+type (
+	// Engine core of the machine
+	Engine struct {
+		InitialFacts  map[string]interface{}
+		Rules         []Rule
+		RuleFunctions map[string]govaluate.ExpressionFunction
+		RuleCache     *cache.Cache
+		RunLock       sync.RWMutex
 	}
-	if c != nil {
-		if c.Worker > 0 {
-			cfg.Worker = c.Worker
+
+	// Rule is struct for rule in fished
+	Rule struct {
+		Input      []string `json:"input"`
+		Output     string   `json:"output"`
+		Expression string   `json:"expression"`
+	}
+
+	// RuleFunction if type defined for rule function
+	RuleFunction func(...interface{}) (interface{}, error)
+
+	// Runtime is an struct for each time Engine.Run() is called
+	Runtime struct {
+		Facts      map[string]interface{}
+		JobCh      chan *Job
+		ResultCh   chan *EvalResult
+		UsedRule   map[int]struct{}
+		FactsMutex sync.RWMutex
+		WorkerWg   sync.WaitGroup
+	}
+
+	// Job struct
+	Job struct {
+		Output           string
+		ParsedExpression *govaluate.EvaluableExpression
+	}
+
+	// EvalResult is evaluation Result
+	EvalResult struct {
+		Key   string
+		Value interface{}
+		Error error
+	}
+)
+
+// New will create new engine
+func New() *Engine {
+	c := cache.New(24*time.Hour, 1*time.Hour)
+
+	return &Engine{
+		RuleCache: c,
+	}
+}
+
+// Set all of engine attibutes in one single function
+func (e *Engine) Set(facts map[string]interface{}, rules []Rule, ruleFunction map[string]RuleFunction) error {
+	var err error
+
+	err = e.SetFacts(facts)
+	if err != nil {
+		return err
+	}
+
+	err = e.SetRules(rules)
+	if err != nil {
+		return err
+	}
+
+	err = e.SetRuleFunctions(ruleFunction)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// SetFacts will set current engine with initial facts (replace the old one)
+func (e *Engine) SetFacts(facts map[string]interface{}) error {
+	e.RunLock.Lock()
+	defer e.RunLock.Unlock()
+	e.InitialFacts = make(map[string]interface{})
+
+	for key, value := range facts {
+		e.InitialFacts[key] = value
+	}
+	return nil
+}
+
+// SetRules will set current engine with rules
+func (e *Engine) SetRules(rules []Rule) error {
+	e.RunLock.Lock()
+	defer e.RunLock.Unlock()
+	e.Rules = make([]Rule, len(rules))
+	copy(e.Rules, rules)
+	e.RuleCache.Flush()
+	return nil
+}
+
+// SetRuleFunctions will set current engine with Expression Functions
+func (e *Engine) SetRuleFunctions(ruleFunctions map[string]RuleFunction) error {
+	e.RunLock.Lock()
+	defer e.RunLock.Unlock()
+	e.RuleFunctions = make(map[string]govaluate.ExpressionFunction)
+
+	for key, value := range ruleFunctions {
+		e.RuleFunctions[key] = govaluate.ExpressionFunction(value)
+	}
+	return nil
+}
+
+// RunDefault will execute run with default parameneter
+func (e *Engine) RunDefault() (interface{}, []error) {
+	return e.Run(DefaultTarget, DefaultWorker)
+}
+
+// Run will execute rule and facts to get the result
+func (e *Engine) Run(target string, worker int) (interface{}, []error) {
+	var workerSize int
+	var endTarget string
+	var errs []error
+
+	e.RunLock.RLock()
+	defer e.RunLock.RUnlock()
+
+	if target == DefaultTarget {
+		endTarget = DefaultTarget
+	} else {
+		endTarget = target
+	}
+
+	if worker == DefaultWorker {
+		numCPU := runtime.NumCPU()
+		if numCPU <= 2 {
+			workerSize = 1
+		} else {
+			workerSize = runtime.NumCPU() - 1
 		}
-		if c.WorkerPoolSize > (0 + cfg.Worker) {
-			cfg.WorkerPoolSize = c.WorkerPoolSize
-		}
-		cfg.Cache = c.Cache
+	} else {
+		workerSize = worker
 	}
-	e := &Engine{
-		Config: cfg,
-		err:    []error{},
+
+	if workerSize <= 0 {
+		workerSize = 1
 	}
-	return e
-}
 
-// SetFacts ...
-func (e *Engine) SetFacts(f map[string]interface{}) {
-	e.wm = make(map[string]interface{})
-	for i, v := range f {
-		e.wm[i] = v
+	facts := make(map[string]interface{})
+	for key, value := range e.InitialFacts {
+		facts[key] = value
 	}
-}
 
-// SetRules ...
-func (e *Engine) SetRules(r []Rule) {
-	e.Rules = make([]Rule, len(r))
-	copy(e.Rules, r)
+	r := &Runtime{
+		Facts:    facts,
+		JobCh:    make(chan *Job, len(e.Rules)),
+		ResultCh: make(chan *EvalResult, len(e.Rules)),
+		UsedRule: make(map[int]struct{}),
+	}
 
-	e.workingRules = make(map[string][]int)
-	for i, rule := range r {
-		for _, input := range rule.Input {
-			if e.workingRules[input] == nil {
-				e.workingRules[input] = []int{i}
-			} else {
-				e.workingRules[input] = append(e.workingRules[input], i)
+	r.WorkerWg.Add(workerSize)
+	for i := 0; i < workerSize; i++ {
+		go func() {
+			defer r.WorkerWg.Done()
+			for job := range r.JobCh {
+				r.Evaluate(job, r.ResultCh)
 			}
-		}
-	}
-}
-
-// SetRuleFunction ...
-func (e *Engine) SetRuleFunction(rf map[string]RuleFunction) {
-	e.rf = make(map[string]govaluate.ExpressionFunction)
-	for i, f := range rf {
-		e.rf[i] = govaluate.ExpressionFunction(f)
-	}
-}
-
-// Run ...
-func (e *Engine) Run(target ...string) (interface{}, []error) {
-	e.runMutex.Lock()
-	defer e.runMutex.Unlock()
-
-	e.Jobs = make(chan int, e.Config.WorkerPoolSize)
-
-	var wg sync.WaitGroup
-
-	e.createAgenda()
-	for i := 0; i < e.Config.Worker; i++ {
-		wg.Add(1)
-		go e.worker(&wg)
+		}()
 	}
 
-	e.watcher()
-	wg.Wait()
-	res := "result_end"
-	if len(target) == 1 {
-		res = target[0]
-	}
-
-	return e.wm[res], e.err
-}
-
-func (e *Engine) watcher() {
-	e.work.Wait()
-	close(e.Jobs)
-
-	for _, rule := range e.Rules {
-		rule.hasExecuted = false
-	}
-}
-
-func (e *Engine) worker(wg *sync.WaitGroup) {
-	for job := range e.Jobs {
-		e.eval(job)
-		e.work.Done()
-	}
-	wg.Done()
-}
-
-// eval will evaluate current rule.
-func (e *Engine) eval(index int) {
-	if e.Rules[index].Output != "" && !e.Rules[index].hasExecuted {
-		e.Rules[index].hasExecuted = true
-		if e.Rules[index].ee == nil {
-			re, err := govaluate.NewEvaluableExpressionWithFunctions(e.Rules[index].Expression, e.rf)
-			if err != nil {
-				e.err = append(e.err, err)
-				return
-			}
-			e.Rules[index].ee = re
-		}
-
-		if e.Rules[index].result == nil || !e.Config.Cache {
-			e.factsMutex.RLock()
-			result, err := e.Rules[index].ee.Evaluate(e.Rules[index].facts)
-			e.factsMutex.RUnlock()
-			if err != nil {
-				e.err = append(e.err, err)
-				return
+	for {
+		var jobLength int
+		var parseRuleError bool
+		for i := range e.Rules {
+			// Check if the rule already been executed
+			if _, ok := r.UsedRule[i]; ok {
+				continue
 			}
 
-			if result != nil {
-				e.Rules[index].result = result
-			}
-		}
+			// copy rule into context
+			rule := e.Rules[i]
 
-		if e.Rules[index].result != nil {
-			e.wmMutex.Lock()
-			e.wm[e.Rules[index].Output] = e.Rules[index].result
-			e.wmMutex.Unlock()
-			e.updateAgenda(e.Rules[index].Output)
-		}
-	}
-}
-
-// Add jobs base on current working memory attribute
-func (e *Engine) updateAgenda(input string) {
-	rules := e.workingRules[input]
-	for _, i := range rules {
-		rule := e.Rules[i]
-		validInput := 0
-		e.wmMutex.RLock()
-		for attribute, value := range e.wm {
-			for _, input := range rule.Input {
-				if input == attribute {
-					validInput++
-					e.factsMutex.Lock()
-					if rule.facts == nil {
-						rule.facts = make(map[string]interface{})
+			// Verify if rule has met input requirement
+			inputLen := len(rule.Input)
+			if inputLen > 0 {
+				var ValidInput int
+				for _, input := range rule.Input {
+					if _, ok := r.Facts[input]; ok {
+						ValidInput++
 					}
-					if rule.facts[attribute] == nil || !e.Config.Cache {
-						rule.facts[attribute] = value
-					}
-					e.factsMutex.Unlock()
+				}
+				if inputLen != ValidInput {
+					continue
 				}
 			}
+
+			// Check cache for parsed rule
+			parsedExpression, ok := e.RuleCache.Get(rule.Expression)
+
+			// if not exist in cache then parse rule
+			if !ok {
+				var err error
+				parsedExpression, err = govaluate.NewEvaluableExpressionWithFunctions(rule.Expression, e.RuleFunctions)
+				if err != nil {
+					if errs == nil {
+						errs = make([]error, 0)
+					}
+					errs = append(errs, err)
+					parseRuleError = true
+					break
+				}
+
+				err = e.RuleCache.Add(rule.Expression, parsedExpression, cache.DefaultExpiration)
+				if err != nil {
+					if errs == nil {
+						errs = make([]error, 0)
+					}
+					errs = append(errs, err)
+					parseRuleError = true
+					break
+				}
+			}
+
+			j := &Job{
+				ParsedExpression: parsedExpression.(*govaluate.EvaluableExpression),
+				Output:           rule.Output,
+			}
+			r.UsedRule[i] = struct{}{}
+			r.JobCh <- j
+			jobLength++
 		}
-		e.wmMutex.RUnlock()
-		if validInput == len(rule.Input) && validInput != 0 {
-			e.work.Add(1)
-			e.Jobs <- i
+
+		if jobLength == 0 || parseRuleError {
+			r.PrepareExit()
+			break
 		}
-		e.Rules[i] = rule
+
+		for jobs := 0; jobs < jobLength; jobs++ {
+			evalResult := <-r.ResultCh
+			if evalResult.Error != nil {
+				if errs == nil {
+					errs = make([]error, 0)
+				}
+				errs = append(errs, evalResult.Error)
+				continue
+			}
+			if evalResult.Value != nil {
+				r.FactsMutex.Lock()
+				r.Facts[evalResult.Key] = evalResult.Value
+				r.FactsMutex.Unlock()
+			}
+		}
 	}
+
+	r.WorkerWg.Wait()
+	return r.Facts[endTarget], errs
 }
 
-// initialize jobs
-func (e *Engine) createAgenda() {
-	for attribute := range e.wm {
-		e.updateAgenda(attribute)
+// Evaluate will evaluate each job in runtime
+func (r *Runtime) Evaluate(job *Job, result chan<- *EvalResult) {
+	evalResult := &EvalResult{
+		Key: job.Output,
 	}
+
+	r.FactsMutex.RLock()
+	res, err := job.ParsedExpression.Evaluate(r.Facts)
+	r.FactsMutex.RUnlock()
+	if err != nil {
+		evalResult.Error = err
+	}
+	evalResult.Value = res
+	result <- evalResult
+}
+
+// PrepareExit the runtime and close
+func (r *Runtime) PrepareExit() {
+	close(r.JobCh)
+	close(r.ResultCh)
 }
