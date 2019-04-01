@@ -183,9 +183,14 @@ func (e *Engine) RunDefault() (interface{}, []error) {
 	return e.Run(DefaultTarget, DefaultWorker)
 }
 
+// RunWithCustomTarget will execute run using customizable end target
+func (e *Engine) RunWithCustomTarget(target string) (interface{}, []error) {
+	return e.Run(target, 0)
+}
+
 // Run will execute rule and facts to get the result
+// DEPRICATION NOTICE : worker param is depricated since it has been moved to engine struct
 func (e *Engine) Run(target string, worker int) (interface{}, []error) {
-	var workerSize int
 	var endTarget string
 	var errs []error
 
@@ -196,21 +201,6 @@ func (e *Engine) Run(target string, worker int) (interface{}, []error) {
 		endTarget = DefaultTarget
 	} else {
 		endTarget = target
-	}
-
-	if worker == DefaultWorker {
-		numCPU := runtime.NumCPU()
-		if numCPU <= 2 {
-			workerSize = 1
-		} else {
-			workerSize = runtime.NumCPU() - 1
-		}
-	} else {
-		workerSize = worker
-	}
-
-	if workerSize <= 0 {
-		workerSize = 1
 	}
 
 	facts := make(map[string]interface{})

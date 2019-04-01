@@ -104,9 +104,9 @@ func TestRun(t *testing.T) {
 				return
 			}
 
-			e := New()
+			e := NewWithCustomWorkerSize(test.Worker)
 			e.Set(test.Facts, ruleMap.Data, test.RuleFunction)
-			res, errs := e.Run(test.Target, test.Worker)
+			res, errs := e.RunWithCustomTarget(test.Target)
 			if test.IsError {
 				assert.NotNil(t, errs)
 			} else {
@@ -208,9 +208,9 @@ func TestDoubleRun(t *testing.T) {
 				return
 			}
 
-			e := New()
+			e := NewWithCustomWorkerSize(test.Worker)
 			e.Set(test.Facts, ruleMap.Data, test.RuleFunction)
-			res, errs := e.Run(test.Target, test.Worker)
+			res, errs := e.RunWithCustomTarget(test.Target)
 			if test.IsError {
 				assert.NotNil(t, errs)
 			} else {
@@ -329,7 +329,7 @@ func BenchmarkRun(b *testing.B) {
 			e := NewWithCustomWorkerSize(test.Worker)
 			e.Set(test.Facts, ruleMap.Data, test.RuleFunction)
 			for i := 0; i < b.N; i++ {
-				e.Run(test.Target, 0)
+				e.RunWithCustomTarget(test.Target)
 			}
 		})
 	}
@@ -437,7 +437,7 @@ func BenchmarkRunFullRemakeEngine(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				e := NewWithCustomWorkerSize(test.Worker)
 				e.Set(test.Facts, ruleMap.Data, test.RuleFunction)
-				e.Run(test.Target, 0)
+				e.RunWithCustomTarget(test.Target)
 			}
 		})
 	}
