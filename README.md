@@ -64,7 +64,7 @@ Remember it is more expensive to set new rules than to set facts.
 
 # Credits
 This project is powered by 
-- https://github.com/Knetic/govaluate. Please check if you need an abritrary expression checker!
+- https://github.com/Knetic/govaluate. Please check if you need an arbitrary expression checker!
 - https://github.com/json-iterator/go. One of (or the fastest) drop-in replacement for standart json library.
 - https://github.com/stretchr/testify. A nice and clean testing library. Helping me a lot for better test results.
 
