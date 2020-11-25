@@ -1,10 +1,12 @@
 package fished
 
 import (
+	"errors"
 	"runtime"
 	"sync"
 	"time"
 
+	"github.com/hooqtv/fished/pool"
 	"github.com/knetic/govaluate"
 	"github.com/patrickmn/go-cache"
 )
@@ -15,6 +17,9 @@ var (
 
 	// DefaultWorker is the default worker for Engine
 	DefaultWorker = 0
+
+	// DefaultRuleLength ...
+	DefaultRuleLength = 100
 )
 
 type (
@@ -25,6 +30,7 @@ type (
 		RuleFunctions map[string]govaluate.ExpressionFunction
 		RuleCache     *cache.Cache
 		RunLock       sync.RWMutex
+		RuntimePool   *pool.ReferenceCountedPool
 	}
 
 	// Rule is struct for rule in fished
@@ -39,12 +45,12 @@ type (
 
 	// Runtime is an struct for each time Engine.Run() is called
 	Runtime struct {
+		pool.ReferenceCounter
 		Facts      map[string]interface{}
 		JobCh      chan *Job
 		ResultCh   chan *EvalResult
 		UsedRule   map[int]struct{}
 		FactsMutex sync.RWMutex
-		WorkerWg   sync.WaitGroup
 	}
 
 	// Job struct
@@ -63,10 +69,56 @@ type (
 
 // New will create new engine
 func New() *Engine {
+	return NewWithCustomWorkerSize(0)
+}
+
+// NewWithCustomWorkerSize ...
+func NewWithCustomWorkerSize(worker int) *Engine {
+	var workerSize int
+
 	c := cache.New(24*time.Hour, 1*time.Hour)
+
+	if worker == DefaultWorker {
+		numCPU := runtime.NumCPU()
+		if numCPU <= 2 {
+			workerSize = 1
+		} else {
+			workerSize = runtime.NumCPU() - 1
+		}
+	} else {
+		workerSize = worker
+	}
+
+	if workerSize <= 0 {
+		workerSize = 1
+	}
 
 	return &Engine{
 		RuleCache: c,
+		RuntimePool: pool.NewReferenceCountedPool(
+			func(counter pool.ReferenceCounter) pool.ReferenceCountable {
+				br := new(Runtime)
+				br.JobCh = make(chan *Job, DefaultRuleLength)
+				br.ResultCh = make(chan *EvalResult, DefaultRuleLength)
+				br.UsedRule = make(map[int]struct{})
+				br.ReferenceCounter = counter
+
+				for i := 0; i < workerSize; i++ {
+					go func() {
+						for job := range br.JobCh {
+							br.Evaluate(job, br.ResultCh)
+						}
+					}()
+				}
+				return br
+			}, func(i interface{}) error {
+				obj, ok := i.(*Runtime)
+				if !ok {
+					return errors.New("Illegal object passed")
+				}
+				obj.Reset()
+				return nil
+			}),
 	}
 }
 
@@ -131,9 +183,14 @@ func (e *Engine) RunDefault() (interface{}, []error) {
 	return e.Run(DefaultTarget, DefaultWorker)
 }
 
+// RunWithCustomTarget will execute run using customizable end target
+func (e *Engine) RunWithCustomTarget(target string) (interface{}, []error) {
+	return e.Run(target, 0)
+}
+
 // Run will execute rule and facts to get the result
+// DEPRICATION NOTICE : worker param is depricated since it has been moved to engine struct
 func (e *Engine) Run(target string, worker int) (interface{}, []error) {
-	var workerSize int
 	var endTarget string
 	var errs []error
 
@@ -146,42 +203,13 @@ func (e *Engine) Run(target string, worker int) (interface{}, []error) {
 		endTarget = target
 	}
 
-	if worker == DefaultWorker {
-		numCPU := runtime.NumCPU()
-		if numCPU <= 2 {
-			workerSize = 1
-		} else {
-			workerSize = runtime.NumCPU() - 1
-		}
-	} else {
-		workerSize = worker
-	}
-
-	if workerSize <= 0 {
-		workerSize = 1
-	}
-
 	facts := make(map[string]interface{})
 	for key, value := range e.InitialFacts {
 		facts[key] = value
 	}
 
-	r := &Runtime{
-		Facts:    facts,
-		JobCh:    make(chan *Job, len(e.Rules)),
-		ResultCh: make(chan *EvalResult, len(e.Rules)),
-		UsedRule: make(map[int]struct{}),
-	}
-
-	r.WorkerWg.Add(workerSize)
-	for i := 0; i < workerSize; i++ {
-		go func() {
-			defer r.WorkerWg.Done()
-			for job := range r.JobCh {
-				r.Evaluate(job, r.ResultCh)
-			}
-		}()
-	}
+	r := e.NewRuntime(facts)
+	defer r.DecrementReferenceCount()
 
 	for {
 		var jobLength int
@@ -246,7 +274,6 @@ func (e *Engine) Run(target string, worker int) (interface{}, []error) {
 		}
 
 		if jobLength == 0 || parseRuleError {
-			r.PrepareExit()
 			break
 		}
 
@@ -267,8 +294,14 @@ func (e *Engine) Run(target string, worker int) (interface{}, []error) {
 		}
 	}
 
-	r.WorkerWg.Wait()
 	return r.Facts[endTarget], errs
+}
+
+// NewRuntime ...
+func (e *Engine) NewRuntime(facts map[string]interface{}) *Runtime {
+	r := e.RuntimePool.Get().(*Runtime)
+	r.Facts = facts
+	return r
 }
 
 // Evaluate will evaluate each job in runtime
@@ -287,8 +320,10 @@ func (r *Runtime) Evaluate(job *Job, result chan<- *EvalResult) {
 	result <- evalResult
 }
 
-// PrepareExit the runtime and close
-func (r *Runtime) PrepareExit() {
-	close(r.JobCh)
-	close(r.ResultCh)
+// Reset Current Runtime
+func (r *Runtime) Reset() error {
+	for i := range r.UsedRule {
+		delete(r.UsedRule, i)
+	}
+	return nil
 }
