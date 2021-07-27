@@ -1,6 +1,7 @@
-
-
 # fished
+
+**Migrated to https://github.coupang.net/coupang/couplay-fished**
+
 Fish answers from rules and facts
 
 # Install
